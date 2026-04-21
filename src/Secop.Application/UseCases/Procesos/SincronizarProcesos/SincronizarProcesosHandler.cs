@@ -1,3 +1,4 @@
+using System.Collections;
 using MediatR;
 using Microsoft.Extensions.Logging;
 using Secop.Application.Interfaces;
@@ -56,7 +57,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             .Distinct()
             .ToList();
 
-        var tareaUnspsc    = _secopApi.ObtenerProcesosRecientesAsync(request.Desde, request.Hasta, codigosExactos, codigosClase, ct);
+        var tareaUnspsc = _secopApi.ObtenerProcesosRecientesAsync(request.Desde, request.Hasta, codigosExactos, codigosClase, ct);
         var tareaRecientes = _secopApi.ObtenerProcesosRecientesAsync(request.Desde, request.Hasta, ct: ct);
 
         await Task.WhenAll(tareaUnspsc, tareaRecientes);
@@ -82,6 +83,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             : [];
 
         var todosDtos = dtosUnspscValidos.Concat(dtosKeywordOnly).ToList();
+        _logger.LogInformation("Proccess finding: {count}", todosDtos.Count());
 
         int nuevos = 0;
 
@@ -104,6 +106,12 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             foreach (var proveedor in todosProveedores)
             {
                 if (proveedor.Embedding is null) continue;
+
+                if (proveedor.PalabrasClave.Count > 0 &&
+                    !proveedor.PalabrasClave.Any(kw =>
+                        !string.IsNullOrWhiteSpace(kw) &&
+                        dto.Objeto?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true))
+                    continue;
 
                 var similitud = await _embedding.CalcularSimilitudAsync(embeddingVector, proveedor.Embedding);
 

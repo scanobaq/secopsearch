@@ -255,4 +255,52 @@ public class SincronizarProcesosHandlerTests
         result.Should().Be(1);
         _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Keyword filter applies to UNSPSC results per-proveedor
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Handle_UnspscMatch_SkipsProveedor_WhenObjetoNotContainsAnyKeyword()
+    {
+        const string procesoId = "PROC-MEDICO-001";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(
+            codigosUnspsc: ["80111500"],
+            palabrasClave: ["logística deportiva", "eventos empresariales"],
+            embedding: embedding);
+
+        var dto = new SecopProcesoDto
+        {
+            Id = procesoId,
+            Titulo = "Médico general urgencias",
+            NombreEntidad = "ESE Tangua",
+            Objeto = "CONTRATO DE PRESTACIÓN DE SERVICIOS PROFESIONALES COMO MÉDICO GENERAL PARA ROTACIÓN EN EL SERVICIO DE URGENCIAS"
+        };
+
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedor]);
+
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dto]);
+
+        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(embedding);
+
+        var handler = CrearHandler();
+        await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        // El proceso se guarda (fue encontrado por UNSPSC) pero no se genera puntaje
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+        _puntajes.Verify(r => r.GuardarAsync(It.IsAny<Puntaje>(), It.IsAny<CancellationToken>()), Times.Never);
+        _alertas.Verify(r => r.EnviarAlertaProcesoAsync(
+            It.IsAny<long>(), It.IsAny<Puntaje>(), It.IsAny<Proceso>(),
+            It.IsAny<Proveedor>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
