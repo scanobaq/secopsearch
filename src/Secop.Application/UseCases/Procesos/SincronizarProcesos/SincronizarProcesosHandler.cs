@@ -20,7 +20,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
     private readonly ILogger<SincronizarProcesosHandler> _logger;
 
     private const float UmbralSimilitudMinima = 0.65f;
-    private const float UmbralAlertaProponer  = 70f;
+    private const float UmbralAlertaProponer = 70f;
 
     public SincronizarProcesosHandler(
         ISecopApiClient secopApi,
@@ -32,14 +32,14 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         IAlertaService alertas,
         ILogger<SincronizarProcesosHandler> logger)
     {
-        _secopApi    = secopApi;
-        _procesos    = procesos;
+        _secopApi = secopApi;
+        _procesos = procesos;
         _proveedores = proveedores;
-        _puntajes    = puntajes;
-        _embedding   = embedding;
-        _scoring     = scoring;
-        _alertas     = alertas;
-        _logger      = logger;
+        _puntajes = puntajes;
+        _embedding = embedding;
+        _scoring = scoring;
+        _alertas = alertas;
+        _logger = logger;
     }
 
     public async Task<int> Handle(SincronizarProcesosCommand request, CancellationToken ct)
@@ -56,31 +56,30 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             .Distinct()
             .ToList();
 
-        var dtosUnspsc = await _secopApi.ObtenerProcesosRecientesAsync(
-            request.Desde, request.Hasta, codigosExactos, codigosClase, ct);
+        var tareaUnspsc    = _secopApi.ObtenerProcesosRecientesAsync(request.Desde, request.Hasta, codigosExactos, codigosClase, ct);
+        var tareaRecientes = _secopApi.ObtenerProcesosRecientesAsync(request.Desde, request.Hasta, ct: ct);
 
-        var dtosUnspscValidos = dtosUnspsc.Where(d => d.EsValido()).ToList();
+        await Task.WhenAll(tareaUnspsc, tareaRecientes);
+
+        var dtosUnspscValidos = tareaUnspsc.Result.Where(d => d.EsValido()).ToList();
         var idsUnspsc = dtosUnspscValidos
             .Select(d => d.Id!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var proveedoresConKeywords = todosProveedores
-            .Where(p => p.PalabrasClave.Count > 0)
+        var todasPalabrasClave = todosProveedores
+            .SelectMany(p => p.PalabrasClave)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var tareasKw = proveedoresConKeywords
-            .SelectMany(p => p.PalabrasClave.Select(kw =>
-                _secopApi.ObtenerProcesosPorPalabraClaveAsync(request.Desde, kw, ct)))
-            .ToList();
-
-        var resultadosKw = await Task.WhenAll(tareasKw);
-
-        var dtosKeywordOnly = resultadosKw
-            .SelectMany(r => r)
-            .Where(d => d.EsValido() && !idsUnspsc.Contains(d.Id!))
-            .GroupBy(d => d.Id!)
-            .Select(g => g.First())
-            .ToList();
+        var dtosKeywordOnly = todasPalabrasClave.Count > 0
+            ? tareaRecientes.Result
+                .Where(d => d.EsValido() && !idsUnspsc.Contains(d.Id!))
+                .Where(d => todasPalabrasClave.Any(kw =>
+                    d.Objeto?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true))
+                .GroupBy(d => d.Id!)
+                .Select(g => g.First())
+                .ToList()
+            : [];
 
         var todosDtos = dtosUnspscValidos.Concat(dtosKeywordOnly).ToList();
 

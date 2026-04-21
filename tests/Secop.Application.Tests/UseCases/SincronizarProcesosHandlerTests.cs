@@ -91,7 +91,7 @@ public class SincronizarProcesosHandlerTests
     // ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Handle_SkipsKeywordFetch_WhenPalabrasClaveIsEmpty()
+    public async Task Handle_SinPalabrasClave_NingunProcesoKeywordOnly()
     {
         var proveedor = CrearProveedor(palabrasClave: null);
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
@@ -104,12 +104,12 @@ public class SincronizarProcesosHandlerTests
             .ReturnsAsync([]);
 
         var handler = CrearHandler();
-        await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
 
-        _secopApi.Verify(
-            c => c.ObtenerProcesosPorPalabraClaveAsync(
-                It.IsAny<DateTime>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        result.Should().Be(0);
+        _puntajes.Verify(r => r.GuardarAsync(
+            It.Is<Puntaje>(p => p.Advertencias.Contains(AdvertenciasPuntaje.EncontradoPorTexto)),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -122,22 +122,27 @@ public class SincronizarProcesosHandlerTests
         const string procesoId = "PROC-KW-001";
         var embedding = new float[] { 0.1f, 0.2f, 0.3f };
         var proveedor = CrearProveedor(palabrasClave: ["software"], embedding: embedding);
-        var dto = CrearDto(procesoId);
+        var dto = new SecopProcesoDto { Id = procesoId, Titulo = "T-" + procesoId, NombreEntidad = "Entidad", Objeto = "Licencia de software empresarial" };
 
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
 
-        // UNSPSC search returns nothing → this proceso won't be in idsUnspsc
+        // Llamada UNSPSC: no encuentra nada → idsUnspsc vacío
         _secopApi
             .Setup(c => c.ObtenerProcesosRecientesAsync(
                 It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
-                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.Is<IEnumerable<string>?>(c => c != null),
+                It.IsAny<IEnumerable<string>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
+        // Llamada general (sin filtro UNSPSC): retorna el proceso con "software" en Objeto
         _secopApi
-            .Setup(c => c.ObtenerProcesosPorPalabraClaveAsync(
-                It.IsAny<DateTime>(), "software", It.IsAny<CancellationToken>()))
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                null,
+                null,
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync([dto]);
 
         _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
@@ -172,23 +177,17 @@ public class SincronizarProcesosHandlerTests
         const string procesoId = "PROC-UNSPSC-001";
         var embedding = new float[] { 0.1f, 0.2f, 0.3f };
         var proveedor = CrearProveedor(palabrasClave: ["software"], embedding: embedding);
-        var dto = CrearDto(procesoId);
+        var dto = new SecopProcesoDto { Id = procesoId, Titulo = "T-" + procesoId, NombreEntidad = "Entidad", Objeto = "Licencia de software empresarial" };
 
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
 
-        // UNSPSC search returns the proceso → it's in idsUnspsc
+        // Ambas llamadas retornan el mismo proceso — UNSPSC lo captura primero
         _secopApi
             .Setup(c => c.ObtenerProcesosRecientesAsync(
                 It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
                 It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync([dto]);
-
-        // keyword search also returns same ID (would be deduped)
-        _secopApi
-            .Setup(c => c.ObtenerProcesosPorPalabraClaveAsync(
-                It.IsAny<DateTime>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dto]);
 
         _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
@@ -235,9 +234,12 @@ public class SincronizarProcesosHandlerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([dto]);
 
+        // Llamada general también retorna el mismo proceso
         _secopApi
-            .Setup(c => c.ObtenerProcesosPorPalabraClaveAsync(
-                It.IsAny<DateTime>(), "tech", It.IsAny<CancellationToken>()))
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                null, null,
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync([dto]);
 
         _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))

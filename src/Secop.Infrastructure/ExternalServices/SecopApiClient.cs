@@ -56,25 +56,6 @@ public class SecopApiClient : ISecopApiClient
         return await EjecutarConsultaAsync(url, ct);
     }
 
-    public async Task<List<SecopProcesoDto>> ObtenerProcesosPorPalabraClaveAsync(
-        DateTime desde, string palabraClave, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(palabraClave))
-            return [];
-
-        var sanitizada = SanitizarPalabraClave(palabraClave);
-        if (string.IsNullOrEmpty(sanitizada))
-            return [];
-
-        var fechaDesde = desde.ToString("yyyy-MM-ddTHH:mm:ss");
-        var whereClause = $"fecha_de_ultima_publicaci > '{fechaDesde}' AND upper(descripci_n_del_procedimiento) LIKE upper('%{sanitizada}%')";
-        var where = Uri.EscapeDataString(whereClause);
-        var order = Uri.EscapeDataString("fecha_de_ultima_publicaci DESC");
-        var url = $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$limit=200&$order={order}";
-
-        return await EjecutarConsultaAsync(url, ct);
-    }
-
     public async Task<List<SecopProcesoDto>> ObtenerDesiertosSinAlertaAsync(CancellationToken ct)
     {
         var where = Uri.EscapeDataString("estado_del_proceso='Desierto'");
@@ -107,16 +88,4 @@ public class SecopApiClient : ISecopApiClient
         }
     }
 
-    private static string SanitizarPalabraClave(string input)
-    {
-        var trimmed = input.Trim();
-        var sb = new System.Text.StringBuilder(trimmed.Length);
-        foreach (var c in trimmed)
-        {
-            if (char.IsLetterOrDigit(c) || c is ' ' or '-' or '_' or '.')
-                sb.Append(c);
-        }
-        var resultado = sb.ToString().Trim();
-        return resultado.Any(char.IsLetterOrDigit) ? resultado : string.Empty;
-    }
 }

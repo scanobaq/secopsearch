@@ -44,6 +44,7 @@ public class ProveedoresController : ControllerBase
             DiasRupRestantes = p.DiasParaVencimientoRup(),
             p.CapacidadFinanciera,
             p.CodigosUnspsc,
+            p.PalabrasClave,
             TieneEmbedding = p.Embedding is not null
         }));
     }

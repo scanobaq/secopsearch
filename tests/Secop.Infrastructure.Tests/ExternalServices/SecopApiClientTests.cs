@@ -83,52 +83,6 @@ public class SecopApiClientTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Keyword search
-    // ─────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task ObtenerProcesosPorPalabraClave_UsesUpperDescripcion_AndLimit200()
-    {
-        var (client, uris) = CrearClienteConCaptura();
-
-        await client.ObtenerProcesosPorPalabraClaveAsync(Desde, "software");
-
-        var query = Uri.UnescapeDataString(uris[0].Query);
-        query.Should().Contain("upper(descripci_n_del_procedimiento) LIKE upper('%software%')");
-        query.Should().Contain("$limit=200");
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Sanitizer
-    // ─────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task ObtenerProcesosPorPalabraClave_SanitizerStrips_PeligrousChars()
-    {
-        var (client, uris) = CrearClienteConCaptura();
-
-        await client.ObtenerProcesosPorPalabraClaveAsync(Desde, "soft'ware%;extra");
-
-        var query = Uri.UnescapeDataString(uris[0].Query);
-        // Single quote from the keyword must be stripped (fecha filter legitimately has quotes)
-        query.Should().NotContain("'ware");
-        query.Should().NotContain("%;");
-        query.Should().Contain("software");
-    }
-
-    [Fact]
-    public async Task ObtenerProcesosPorPalabraClave_AllSpecialInput_MakesNoHttpCall()
-    {
-        var (client, uris) = CrearClienteConCaptura();
-
-        // Only punctuation — sanitizer returns empty → no HTTP call
-        var result = await client.ObtenerProcesosPorPalabraClaveAsync(Desde, "';--!!!");
-
-        result.Should().BeEmpty();
-        uris.Should().BeEmpty();
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
     // Inner handler
     // ─────────────────────────────────────────────────────────────────────────
 
