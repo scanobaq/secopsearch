@@ -82,8 +82,20 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
                 .ToList()
             : [];
 
-        var todosDtos = dtosUnspscValidos.Concat(dtosKeywordOnly).ToList();
-        _logger.LogInformation("Proccess finding: {count}", todosDtos.Count());
+        var hayProveedorSinKeywords = todosProveedores
+            .Any(p => p.Embedding is not null && p.PalabrasClave.Count == 0);
+
+        var kwsGlobalesValidas = todasPalabrasClave
+            .Where(kw => !string.IsNullOrWhiteSpace(kw))
+            .ToList();
+
+        var todosDtos = dtosUnspscValidos.Concat(dtosKeywordOnly)
+            .Where(d => hayProveedorSinKeywords ||
+                        kwsGlobalesValidas.Any(kw =>
+                            d.Objeto?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true))
+            .ToList();
+
+        _logger.LogInformation("Proccess finding: {count}", todosDtos.Count);
 
         int nuevos = 0;
 

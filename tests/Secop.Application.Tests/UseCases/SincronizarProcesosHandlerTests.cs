@@ -257,6 +257,80 @@ public class SincronizarProcesosHandlerTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Pre-filter: todosDtos excludes contracts no proveedor would evaluate
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Handle_AllProveedoresTienenKeywords_UnspscMatchSinKeywordMatch_NotSaved()
+    {
+        const string procesoId = "PROC-PREFILTER-001";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(
+            codigosUnspsc: ["80111500"],
+            palabrasClave: ["logística"],
+            embedding: embedding);
+
+        var dto = new SecopProcesoDto
+        {
+            Id = procesoId, Titulo = "Médico general", NombreEntidad = "ESE",
+            Objeto = "PRESTACIÓN DE SERVICIOS COMO MÉDICO"
+        };
+
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedor]);
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dto]);
+
+        var handler = CrearHandler();
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        result.Should().Be(0);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Handle_ProveedorSinKeywords_UnspscMatchPasaPrefilter()
+    {
+        const string procesoId = "PROC-PREFILTER-002";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(
+            codigosUnspsc: ["80111500"],
+            palabrasClave: null, // sin keywords → acepta todo
+            embedding: embedding);
+
+        var dto = new SecopProcesoDto
+        {
+            Id = procesoId, Titulo = "Médico general", NombreEntidad = "ESE",
+            Objeto = "PRESTACIÓN DE SERVICIOS COMO MÉDICO"
+        };
+
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedor]);
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dto]);
+        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(embedding);
+        _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
+            .ReturnsAsync(0.3f); // below threshold → no puntaje, pero sí GuardarAsync proceso
+
+        var handler = CrearHandler();
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        result.Should().Be(1);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Keyword filter applies to UNSPSC results per-proveedor
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -296,8 +370,8 @@ public class SincronizarProcesosHandlerTests
         var handler = CrearHandler();
         await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
 
-        // El proceso se guarda (fue encontrado por UNSPSC) pero no se genera puntaje
-        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+        // El proceso no pasa el pre-filtro — ningún proveedor lo evaluaría — así que no se guarda nada
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Never);
         _puntajes.Verify(r => r.GuardarAsync(It.IsAny<Puntaje>(), It.IsAny<CancellationToken>()), Times.Never);
         _alertas.Verify(r => r.EnviarAlertaProcesoAsync(
             It.IsAny<long>(), It.IsAny<Puntaje>(), It.IsAny<Proceso>(),

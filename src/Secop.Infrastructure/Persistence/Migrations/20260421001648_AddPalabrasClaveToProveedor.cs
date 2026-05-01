@@ -15,7 +15,7 @@ namespace Secop.Infrastructure.Persistence.Migrations
                 name: "palabras_clave",
                 table: "proveedores",
                 type: "text[]",
-                nullable: false);
+                nullable: true);
         }
 
         /// <inheritdoc />
