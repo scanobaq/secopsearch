@@ -24,9 +24,9 @@ public static class DependencyInjection
                 npgsql => npgsql.UseVector()));
 
         // ── Repositorios (Scoped — ciclo de vida por request) ───────────────
-        services.AddScoped<IProcesoRepository,  ProcesoRepository>();
+        services.AddScoped<IProcesoRepository, ProcesoRepository>();
         services.AddScoped<IProveedorRepository, ProveedorRepository>();
-        services.AddScoped<IPuntajeRepository,  PuntajeRepository>();
+        services.AddScoped<IPuntajeRepository, PuntajeRepository>();
         services.AddScoped<IDecisionRepository, DecisionRepository>();
 
         // ── Scoring (Singleton — pura lógica sin estado) ────────────────────
