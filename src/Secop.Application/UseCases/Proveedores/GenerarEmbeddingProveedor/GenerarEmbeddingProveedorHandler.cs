@@ -29,9 +29,16 @@ public class GenerarEmbeddingProveedorHandler : IRequestHandler<GenerarEmbedding
             return false;
         }
 
-        // El texto que representa el perfil: nombre + toda la experiencia concatenada
-        var textoEmbedding = $"{proveedor.Nombre}. " +
-                             string.Join(". ", proveedor.ExperienciaDescripcion);
+        // El texto que representa el perfil semántico completo del proveedor.
+        // Incluye experiencia, palabras clave, códigos UNSPSC y capacidad para que
+        // el embedding capture intención comercial, alcance y restricciones reales.
+        var textoEmbedding = $$"""
+            Proveedor: {{proveedor.Nombre}}.
+            Experiencia y capacidades: {{string.Join(". ", proveedor.ExperienciaDescripcion)}}.
+            Palabras clave de búsqueda: {{string.Join(", ", proveedor.PalabrasClave)}}.
+            Códigos UNSPSC registrados: {{string.Join(", ", proveedor.CodigosUnspsc)}}.
+            Capacidad financiera: {{proveedor.CapacidadFinanciera}} COP.
+            """;
 
         var embedding = await _embedding.GenerarEmbeddingAsync(textoEmbedding, ct);
         proveedor.AsignarEmbedding(embedding);

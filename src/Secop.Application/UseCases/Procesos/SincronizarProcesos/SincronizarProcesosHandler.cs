@@ -1,4 +1,4 @@
-using System.Collections;
+using System.Text.RegularExpressions;
 using MediatR;
 using Microsoft.Extensions.Logging;
 using Secop.Application.Interfaces;
@@ -20,8 +20,8 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
     private readonly IAlertaService _alertas;
     private readonly ILogger<SincronizarProcesosHandler> _logger;
 
-    private const float UmbralSimilitudMinima = 0.65f;
-    private const float UmbralAlertaProponer = 70f;
+    private const float UmbralSimilitudMinima = 0.40f;
+    private const float UmbralAlertaProponer = 40f;
 
     public SincronizarProcesosHandler(
         ISecopApiClient secopApi,
@@ -62,8 +62,28 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
         await Task.WhenAll(tareaUnspsc, tareaRecientes);
 
-        var dtosUnspscValidos = tareaUnspsc.Result.Where(d => d.EsValido()).ToList();
-        var idsUnspsc = dtosUnspscValidos
+        _logger.LogInformation(
+            "SECOP debug — crudos UNSPSC: {UnspscCount}, crudos recientes: {RecientesCount}",
+            tareaUnspsc.Result.Count,
+            tareaRecientes.Result.Count);
+
+        var dtosUnspscValidos = tareaUnspsc.Result
+            .Where(d => d.EsValido())
+            .ToList();
+
+        _logger.LogInformation(
+            "SECOP debug — válidos UNSPSC tras EsValido(): {ValidosUnspscCount}",
+            dtosUnspscValidos.Count);
+
+        var dtosUnspscAplicables = dtosUnspscValidos
+            .Where(d => d.EstaAbiertoParaAplicar())
+            .ToList();
+
+        _logger.LogInformation(
+            "SECOP debug — aplicables UNSPSC tras estado/fase: {AplicablesUnspscCount}",
+            dtosUnspscAplicables.Count);
+
+        var idsUnspsc = dtosUnspscAplicables
             .Select(d => d.Id!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -74,33 +94,49 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
         var dtosKeywordOnly = todasPalabrasClave.Count > 0
             ? tareaRecientes.Result
-                .Where(d => d.EsValido() && !idsUnspsc.Contains(d.Id!))
-                .Where(d => todasPalabrasClave.Any(kw =>
-                    d.Objeto?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true))
+                .Where(d => d.EsValido() && d.EstaAbiertoParaAplicar() && !idsUnspsc.Contains(d.Id!))
+                .Where(d => ProcesoCoincideConAlgunaPalabraClave(todasPalabrasClave, d.Objeto))
                 .GroupBy(d => d.Id!)
                 .Select(g => g.First())
                 .ToList()
             : [];
 
-        var hayProveedorSinKeywords = todosProveedores
-            .Any(p => p.Embedding is not null && p.PalabrasClave.Count == 0);
+        _logger.LogInformation(
+            "SECOP debug — palabras clave globales: {KeywordsCount}, candidatos keyword-only: {KeywordOnlyCount}",
+            todasPalabrasClave.Count,
+            dtosKeywordOnly.Count);
 
-        var kwsGlobalesValidas = todasPalabrasClave
-            .Where(kw => !string.IsNullOrWhiteSpace(kw))
-            .ToList();
+        var candidatosPorProceso = new Dictionary<string, CandidatoProceso>(StringComparer.OrdinalIgnoreCase);
 
-        var todosDtos = dtosUnspscValidos.Concat(dtosKeywordOnly)
-            .Where(d => hayProveedorSinKeywords ||
-                        kwsGlobalesValidas.Any(kw =>
-                            d.Objeto?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true))
-            .ToList();
+        foreach (var dto in dtosUnspscAplicables.Concat(dtosKeywordOnly))
+        {
+            foreach (var proveedor in todosProveedores)
+            {
+                if (proveedor.Embedding is null) continue;
+                if (!ProcesoCoincideConPalabrasClave(proveedor, dto.Objeto)) continue;
 
-        _logger.LogInformation("Proccess finding: {count}", todosDtos.Count);
+                if (!candidatosPorProceso.TryGetValue(dto.Id!, out var candidato))
+                {
+                    candidato = new CandidatoProceso(dto, !idsUnspsc.Contains(dto.Id!));
+                    candidatosPorProceso[dto.Id!] = candidato;
+                }
+
+                candidato.Proveedores.Add(proveedor);
+            }
+        }
+
+        var candidatos = candidatosPorProceso.Values.ToList();
+
+        _logger.LogInformation(
+            "SECOP debug — candidatos únicos por proveedor antes de embeddings: {Count}",
+            candidatos.Count);
 
         int nuevos = 0;
 
-        foreach (var dto in todosDtos)
+        foreach (var candidato in candidatos)
         {
+            var dto = candidato.Dto;
+
             if (await _procesos.ExisteAsync(dto.Id!, ct))
                 continue;
 
@@ -113,25 +149,19 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             await _procesos.GuardarAsync(proceso, ct);
             nuevos++;
 
-            bool esKeywordOnly = !idsUnspsc.Contains(dto.Id!);
-
-            foreach (var proveedor in todosProveedores)
+            foreach (var proveedor in candidato.Proveedores)
             {
-                if (proveedor.Embedding is null) continue;
-
-                if (proveedor.PalabrasClave.Count > 0 &&
-                    !proveedor.PalabrasClave.Any(kw =>
-                        !string.IsNullOrWhiteSpace(kw) &&
-                        dto.Objeto?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true))
-                    continue;
-
                 var similitud = await _embedding.CalcularSimilitudAsync(embeddingVector, proveedor.Embedding);
+
+                _logger.LogInformation(
+                    "Similitud entre Proceso {ProcesoId} y Proveedor {ProveedorId}: {Similitud}",
+                    proceso.Id, proveedor.Id, similitud);
 
                 if (similitud < UmbralSimilitudMinima) continue;
 
                 var puntaje = await _scoring.CalcularAsync(proveedor, proceso, similitud);
 
-                if (esKeywordOnly)
+                if (candidato.EsKeywordOnly)
                     puntaje.AgregarAdvertencia(AdvertenciasPuntaje.EncontradoPorTexto);
 
                 await _puntajes.GuardarAsync(puntaje, ct);
@@ -155,6 +185,8 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         _ = decimal.TryParse(dto.Presupuesto, out var presupuesto);
         _ = DateTime.TryParse(dto.FechaCierre, out var fechaCierre);
         _ = DateTime.TryParse(dto.FechaUltimaPublicacion, out var fechaPublicacion);
+        fechaCierre = DateTime.SpecifyKind(fechaCierre, DateTimeKind.Utc);
+        fechaPublicacion = DateTime.SpecifyKind(fechaPublicacion, DateTimeKind.Utc);
 
         return new Proceso(
             id: dto.Id!,
@@ -170,5 +202,68 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             departamentoEntidad: dto.DepartamentoEntidad ?? string.Empty,
             urlProceso: dto.UrlProceso ?? string.Empty
         );
+    }
+
+    private static bool ProcesoCoincideConPalabrasClave(Proveedor proveedor, string? objetoProceso)
+    {
+        var tienePalabrasClaveValidas = false;
+
+        foreach (var palabraClave in proveedor.PalabrasClave)
+        {
+            if (string.IsNullOrWhiteSpace(palabraClave))
+                continue;
+
+            tienePalabrasClaveValidas = true;
+
+            if (ContienePalabraClave(objetoProceso, palabraClave))
+                return true;
+        }
+
+        return !tienePalabrasClaveValidas;
+    }
+
+    private static bool ProcesoCoincideConAlgunaPalabraClave(IEnumerable<string> palabrasClave, string? objetoProceso)
+    {
+        foreach (var palabraClave in palabrasClave)
+        {
+            if (string.IsNullOrWhiteSpace(palabraClave))
+                continue;
+
+            if (ContienePalabraClave(objetoProceso, palabraClave))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool ContienePalabraClave(string? texto, string palabraClave)
+    {
+        if (string.IsNullOrWhiteSpace(texto)) return false;
+
+        var keyword = palabraClave.Trim();
+        if (keyword.Length == 0) return false;
+
+        // Acrónimos o keywords cortas como "IA", "BTL", "ATL" no pueden usar Contains,
+        // porque producen falsos positivos dentro de palabras como "asistencial" o "social".
+        if (keyword.Length <= 3)
+        {
+            var pattern = $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(keyword)}(?![\p{{L}}\p{{N}}])";
+            return Regex.IsMatch(texto, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
+        return texto.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class CandidatoProceso
+    {
+        public CandidatoProceso(global::Secop.Application.DTOs.SecopProcesoDto dto, bool esKeywordOnly)
+        {
+            Dto = dto;
+            EsKeywordOnly = esKeywordOnly;
+        }
+
+        public global::Secop.Application.DTOs.SecopProcesoDto Dto { get; }
+        public bool EsKeywordOnly { get; }
+        public HashSet<Proveedor> Proveedores { get; } = [];
     }
 }

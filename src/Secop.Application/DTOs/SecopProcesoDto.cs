@@ -36,6 +36,15 @@ public class SecopProcesoDto
     [JsonPropertyName("estado_del_procedimiento")]
     public string? Estado { get; set; }
 
+    [JsonPropertyName("fase")]
+    public string? Fase { get; set; }
+
+    [JsonPropertyName("estado_de_apertura_del_proceso")]
+    public string? EstadoApertura { get; set; }
+
+    [JsonPropertyName("estado_resumen")]
+    public string? EstadoResumen { get; set; }
+
     // El dataset usa "entidad" (sin prefijo "nombre_de_la_")
     [JsonPropertyName("entidad")]
     public string? NombreEntidad { get; set; }
@@ -58,6 +67,12 @@ public class SecopProcesoDto
         !string.IsNullOrWhiteSpace(Titulo) &&
         !string.IsNullOrWhiteSpace(NombreEntidad);
 
+    public bool EstaAbiertoParaAplicar() =>
+        EsAbierto(EstadoApertura) &&
+        EsPublicado(Estado) &&
+        (EsFaseAplicable(Fase) || EsFaseAplicable(EstadoResumen)) &&
+        FechaRecepcionPermiteAplicar();
+
     public ModalidadContrato ObtenerModalidad() => TipoProceso?.ToUpperInvariant() switch
     {
         var t when t != null && t.Contains("LICITACION") => ModalidadContrato.LicitacionPublica,
@@ -77,6 +92,31 @@ public class SecopProcesoDto
         var e when e != null && e.Contains("CERRADO")    => EstadoProceso.Cerrado,
         _ => EstadoProceso.Activo
     };
+
+    private static bool EsAbierto(string? value) =>
+        value?.Equals("Abierto", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static bool EsPublicado(string? value) =>
+        value?.Equals("Publicado", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static bool EsFaseAplicable(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        return value.Equals("Presentación de oferta", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("Fase de ofertas", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool FechaRecepcionPermiteAplicar()
+    {
+        // Este campo es sparse en SECOP: algunos registros lo traen y otros no.
+        // Si viene, es la señal más fuerte para evitar procesos ya vencidos.
+        // Si no viene o no parsea, caemos al filtro operativo por estado/fase.
+        if (!DateTime.TryParse(FechaCierre, out var fechaRecepcion))
+            return true;
+
+        return fechaRecepcion.Date >= DateTime.UtcNow.Date;
+    }
 }
 
 public class UrlProcesoDto

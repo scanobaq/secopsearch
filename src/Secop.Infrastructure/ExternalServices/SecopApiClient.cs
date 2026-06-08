@@ -15,7 +15,7 @@ public class SecopApiClient : ISecopApiClient
 
     public SecopApiClient(HttpClient http, ILogger<SecopApiClient> logger)
     {
-        _http   = http;
+        _http = http;
         _logger = logger;
     }
 
@@ -34,7 +34,7 @@ public class SecopApiClient : ISecopApiClient
             : $"fecha_de_ultima_publicaci > '{fechaDesde}'";
 
         var exactos = codigosUnspsc?.Distinct().ToList() ?? [];
-        var clases  = codigosClase?.Distinct().ToList() ?? [];
+        var clases = codigosClase?.Distinct().ToList() ?? [];
 
         var unspscPredicados = new List<string>();
         if (exactos.Count > 0)
@@ -51,7 +51,7 @@ public class SecopApiClient : ISecopApiClient
 
         var where = Uri.EscapeDataString(whereClause);
         var order = Uri.EscapeDataString("fecha_de_ultima_publicaci DESC");
-        var url   = $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$limit=1000&$order={order}";
+        var url = $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$limit=1000&$order={order}";
 
         return await EjecutarConsultaAsync(url, ct);
     }
@@ -60,7 +60,7 @@ public class SecopApiClient : ISecopApiClient
     {
         var where = Uri.EscapeDataString("estado_del_proceso='Desierto'");
         var order = Uri.EscapeDataString("fecha_de_ultima_publicaci DESC");
-        var url   = $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$limit=500&$order={order}";
+        var url = $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$limit=500&$order={order}";
 
         return await EjecutarConsultaAsync(url, ct);
     }
@@ -68,7 +68,7 @@ public class SecopApiClient : ISecopApiClient
     public async Task<List<SecopProcesoDto>> ObtenerProcesosConPaginacionAsync(int limit, int offset, CancellationToken ct)
     {
         var order = Uri.EscapeDataString("fecha_de_ultima_publicaci DESC");
-        var url   = $"{BaseUrl}/{DatasetProcesos}.json?$limit={limit}&$offset={offset}&$order={order}";
+        var url = $"{BaseUrl}/{DatasetProcesos}.json?$limit={limit}&$offset={offset}&$order={order}";
 
         return await EjecutarConsultaAsync(url, ct);
     }
@@ -77,7 +77,7 @@ public class SecopApiClient : ISecopApiClient
     {
         try
         {
-            var json   = await _http.GetStringAsync(url, ct);
+            var json = await _http.GetStringAsync(url, ct);
             var result = JsonSerializer.Deserialize<List<SecopProcesoDto>>(json);
             return result ?? [];
         }
