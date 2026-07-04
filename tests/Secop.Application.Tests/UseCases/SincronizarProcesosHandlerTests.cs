@@ -19,11 +19,17 @@ public class SincronizarProcesosHandlerTests
     private readonly Mock<IEmbeddingService> _embedding = new();
     private readonly Mock<IScoringService> _scoring = new();
     private readonly Mock<IAlertaService> _alertas = new();
+    private readonly Mock<IFiltrosProcesoPolicy> _filtros = new();
+
+    public SincronizarProcesosHandlerTests()
+    {
+        _filtros.Setup(f => f.DescartarSoloPublicitario).Returns(true);
+    }
 
     private SincronizarProcesosHandler CrearHandler() =>
         new(_secopApi.Object, _procesos.Object, _proveedores.Object,
             _puntajes.Object, _embedding.Object, _scoring.Object,
-            _alertas.Object, NullLogger<SincronizarProcesosHandler>.Instance);
+            _alertas.Object, _filtros.Object, NullLogger<SincronizarProcesosHandler>.Instance);
 
     private static Proveedor CrearProveedor(
         List<string>? codigosUnspsc = null,
@@ -57,6 +63,27 @@ public class SincronizarProcesosHandlerTests
 
     private static SecopProcesoDto CrearDto(string id) =>
         new() { Id = id, Titulo = "T-" + id, NombreEntidad = "Entidad" };
+
+    /// <summary>
+    /// Crea un DTO que satisface EstaAbiertoParaAplicar() (EstadoApertura/Estado/Fase reales),
+    /// necesario para ejercitar el pipeline completo en pruebas de filtros y mapeo.
+    /// </summary>
+    private static SecopProcesoDto CrearDtoAbierto(
+        string id,
+        string? modalidad = null,
+        string? nombreEntidad = "Entidad",
+        string? objeto = "Objeto") =>
+        new()
+        {
+            Id = id,
+            Titulo = "T-" + id,
+            NombreEntidad = nombreEntidad,
+            Objeto = objeto,
+            Modalidad = modalidad,
+            EstadoApertura = "Abierto",
+            Estado = "Publicado",
+            Fase = "Presentación de oferta"
+        };
 
     // ─────────────────────────────────────────────────────────────────────────
     // CodigosClase derivation
@@ -376,5 +403,187 @@ public class SincronizarProcesosHandlerTests
         _alertas.Verify(r => r.EnviarAlertaProcesoAsync(
             It.IsAny<long>(), It.IsAny<Puntaje>(), It.IsAny<Proceso>(),
             It.IsAny<Proveedor>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SPEC-03: Toggle publicitario — descarta solo publicitario por defecto
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Handle_RegimenEspecialPublicitarioSinOfertas_DescartadoCuandoToggleActivo()
+    {
+        const string procesoId = "PROC-PUBLICITARIO-001";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(palabrasClave: null, embedding: embedding);
+        var dto = CrearDtoAbierto(procesoId, modalidad: "Régimen Especial");
+
+        _filtros.Setup(f => f.DescartarSoloPublicitario).Returns(true);
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedor]);
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dto]);
+
+        var handler = CrearHandler();
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        result.Should().Be(0);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Handle_RegimenEspecialConOfertas_NoDescartadoAunConToggleActivo()
+    {
+        const string procesoId = "PROC-CONOFERTAS-001";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(palabrasClave: null, embedding: embedding);
+        var dto = CrearDtoAbierto(procesoId, modalidad: "Régimen Especial (con ofertas)");
+
+        _filtros.Setup(f => f.DescartarSoloPublicitario).Returns(true);
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedor]);
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dto]);
+        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(embedding);
+        _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
+            .ReturnsAsync(0.3f);
+
+        var handler = CrearHandler();
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        result.Should().Be(1);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Handle_RegimenEspecialPublicitario_NoDescartadoCuandoToggleDesactivado()
+    {
+        const string procesoId = "PROC-TOGGLEOFF-001";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(palabrasClave: null, embedding: embedding);
+        var dto = CrearDtoAbierto(procesoId, modalidad: "Régimen Especial");
+
+        _filtros.Setup(f => f.DescartarSoloPublicitario).Returns(false);
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedor]);
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dto]);
+        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(embedding);
+        _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
+            .ReturnsAsync(0.3f);
+
+        var handler = CrearHandler();
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        result.Should().Be(1);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SPEC-04: Entity name pattern flags without discarding
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Handle_EntidadConPatronRegimenEspecial_AgregaAdvertenciaSinDescartar()
+    {
+        const string procesoId = "PROC-UNIV-001";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(palabrasClave: null, embedding: embedding);
+        var dto = CrearDtoAbierto(procesoId, modalidad: "Licitación Pública", nombreEntidad: "UNIVERSIDAD NACIONAL DE COLOMBIA");
+
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedor]);
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dto]);
+        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(embedding);
+        _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
+            .ReturnsAsync(0.8f);
+
+        var puntaje = CrearPuntaje(procesoId, proveedor.Id);
+        Puntaje? puntajeCapturado = null;
+        _scoring.Setup(s => s.CalcularAsync(proveedor, It.IsAny<Proceso>(), 0.8f))
+            .ReturnsAsync(puntaje);
+        _puntajes.Setup(r => r.GuardarAsync(It.IsAny<Puntaje>(), It.IsAny<CancellationToken>()))
+            .Callback<Puntaje, CancellationToken>((p, _) => puntajeCapturado = p);
+
+        var handler = CrearHandler();
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        result.Should().Be(1);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+        puntajeCapturado.Should().NotBeNull();
+        puntajeCapturado!.Advertencias.Should().Contain(AdvertenciasPuntaje.PosibleRegimenEspecial);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SPEC-01/02/05/08/09: New field mapping onto Proceso
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Handle_MapeaCamposNuevosDesdeDto()
+    {
+        const string procesoId = "PROC-MAPEO-001";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(palabrasClave: null, embedding: embedding);
+        var dto = CrearDtoAbierto(procesoId, modalidad: "Licitación Pública");
+        dto.CategoriasAdicionales = "V1.80101500,V1.43211503";
+        dto.TipoContrato = "Prestación de servicios";
+        dto.NombreProveedorAdjudicado = "Proveedor Ganador";
+        dto.ValorTotalAdjudicacion = "500000";
+        dto.FechaAdjudicacion = "2026-05-01";
+        dto.Adjudicado = "Si";
+
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedor]);
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dto]);
+        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(embedding);
+        _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
+            .ReturnsAsync(0.3f);
+
+        Proceso? procesoGuardado = null;
+        _procesos.Setup(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()))
+            .Callback<Proceso, CancellationToken>((p, _) => procesoGuardado = p);
+
+        var handler = CrearHandler();
+        await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        procesoGuardado.Should().NotBeNull();
+        procesoGuardado!.CategoriasAdicionales.Should().BeEquivalentTo(["80101500", "43211503"]);
+        procesoGuardado.TipoContrato.Should().Be("Prestación de servicios");
+        procesoGuardado.AdjudicadoA.Should().Be("Proveedor Ganador");
+        procesoGuardado.Estado.Should().Be(EstadoProceso.Adjudicado);
+        procesoGuardado.Clasificacion.Should().Be(ClasificacionRegimen.Ley80);
     }
 }

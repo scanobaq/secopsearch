@@ -36,14 +36,21 @@ public class SecopApiClient : ISecopApiClient
         var exactos = codigosUnspsc?.Distinct().ToList() ?? [];
         var clases = codigosClase?.Distinct().ToList() ?? [];
 
+        // Buscamos coincidencias tanto en codigo_principal_de_categoria (categoría principal)
+        // como en categorias_adicionales (SPEC-08) — un proceso puede calificar por cualquiera.
         var unspscPredicados = new List<string>();
         if (exactos.Count > 0)
         {
             var inClause = string.Join(",", exactos.Select(c => $"'V1.{c}'"));
             unspscPredicados.Add($"codigo_principal_de_categoria IN({inClause})");
+            foreach (var codigo in exactos)
+                unspscPredicados.Add($"categorias_adicionales LIKE '%V1.{codigo}%'");
         }
         foreach (var clase in clases)
+        {
             unspscPredicados.Add($"codigo_principal_de_categoria LIKE 'V1.{clase}%'");
+            unspscPredicados.Add($"categorias_adicionales LIKE '%V1.{clase}%'");
+        }
 
         var whereClause = filtroFecha;
         if (unspscPredicados.Count > 0)

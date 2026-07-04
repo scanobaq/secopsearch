@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Secop.Application.Interfaces;
 using Secop.Infrastructure.ExternalServices;
 using Secop.Infrastructure.ExternalServices.Telegram;
+using Secop.Infrastructure.Filtros;
 using Secop.Infrastructure.Persistence;
 using Secop.Infrastructure.Persistence.Repositories;
 using Secop.Infrastructure.Scoring;
@@ -31,6 +32,9 @@ public static class DependencyInjection
 
         // ── Scoring (Singleton — pura lógica sin estado) ────────────────────
         services.AddSingleton<IScoringService, ScoringService>();
+
+        // ── Filtros de proceso (toggle publicitario, SPEC-03) ───────────────
+        services.AddSingleton<IFiltrosProcesoPolicy, FiltrosProcesoPolicy>();
 
         // ── OpenAI Embeddings ────────────────────────────────────────────────
         services.AddHttpClient<IEmbeddingService, OpenAiEmbeddingService>(client =>

@@ -30,11 +30,46 @@ public class SecopProcesoDto
     [JsonPropertyName("fecha_de_ultima_publicaci")]
     public string? FechaUltimaPublicacion { get; set; }
 
-    [JsonPropertyName("tipo_de_proceso")]
-    public string? TipoProceso { get; set; }
+    // El dataset real nunca devuelve "tipo_de_proceso" — el campo correcto es
+    // "modalidad_de_contratacion" (bug raíz identificado en SPEC-01).
+    [JsonPropertyName("modalidad_de_contratacion")]
+    public string? Modalidad { get; set; }
 
     [JsonPropertyName("estado_del_procedimiento")]
     public string? Estado { get; set; }
+
+    [JsonPropertyName("adjudicado")]
+    public string? Adjudicado { get; set; }
+
+    [JsonPropertyName("valor_total_adjudicacion")]
+    public string? ValorTotalAdjudicacion { get; set; }
+
+    [JsonPropertyName("nombre_del_proveedor")]
+    public string? NombreProveedorAdjudicado { get; set; }
+
+    [JsonPropertyName("fecha_adjudicacion")]
+    public string? FechaAdjudicacion { get; set; }
+
+    [JsonPropertyName("categorias_adicionales")]
+    public string? CategoriasAdicionales { get; set; }
+
+    [JsonPropertyName("tipo_de_contrato")]
+    public string? TipoContrato { get; set; }
+
+    [JsonPropertyName("proveedores_invitados")]
+    public string? ProveedoresInvitados { get; set; }
+
+    [JsonPropertyName("proveedores_que_manifestaron")]
+    public string? ProveedoresQueManifestaron { get; set; }
+
+    [JsonPropertyName("respuestas_al_procedimiento")]
+    public string? RespuestasAlProcedimiento { get; set; }
+
+    [JsonPropertyName("conteo_de_respuestas_a_ofertas")]
+    public string? ConteoRespuestasOfertas { get; set; }
+
+    [JsonPropertyName("proveedores_unicos_con")]
+    public string? ProveedoresUnicosCon { get; set; }
 
     [JsonPropertyName("fase")]
     public string? Fase { get; set; }
@@ -73,25 +108,82 @@ public class SecopProcesoDto
         (EsFaseAplicable(Fase) || EsFaseAplicable(EstadoResumen)) &&
         FechaRecepcionPermiteAplicar();
 
-    public ModalidadContrato ObtenerModalidad() => TipoProceso?.ToUpperInvariant() switch
+    public ModalidadContrato ObtenerModalidad() => NormalizarModalidad(Modalidad) switch
     {
-        var t when t != null && t.Contains("LICITACION") => ModalidadContrato.LicitacionPublica,
-        var t when t != null && t.Contains("ABREVIADA")  => ModalidadContrato.SeleccionAbreviada,
-        var t when t != null && t.Contains("MERITOS")    => ModalidadContrato.ConcursoMeritos,
-        var t when t != null && t.Contains("DIRECTA")    => ModalidadContrato.ContratacionDirecta,
-        var t when t != null && t.Contains("MINIMA")     => ModalidadContrato.MinimaCuantia,
-        var t when t != null && t.Contains("ACUERDO")    => ModalidadContrato.AcuerdoMarcoPrecios,
+        var t when t != null && t.Contains("LICITACI") => ModalidadContrato.LicitacionPublica,
+        var t when t != null && t.Contains("ABREVIADA") => ModalidadContrato.SeleccionAbreviada,
+        var t when t != null && t.Contains("RITOS") => ModalidadContrato.ConcursoMeritos,
+        var t when t != null && t.Contains("DIRECTA") => ModalidadContrato.ContratacionDirecta,
+        var t when t != null && t.Contains("NIMA CUANT") => ModalidadContrato.MinimaCuantia,
+        var t when t != null && t.Contains("ACUERDO") => ModalidadContrato.AcuerdoMarcoPrecios,
         _ => ModalidadContrato.Otro
     };
 
-    public EstadoProceso ObtenerEstado() => Estado?.ToUpperInvariant() switch
+    /// <summary>
+    /// Clasifica el régimen de contratación real (SPEC-02) a partir de
+    /// <c>modalidad_de_contratacion</c>.
+    /// </summary>
+    public ClasificacionRegimen ObtenerClasificacion() => NormalizarModalidad(Modalidad) switch
     {
-        var e when e != null && e.Contains("DESIERTO")   => EstadoProceso.Desierto,
-        var e when e != null && e.Contains("ADJUDICADO") => EstadoProceso.Adjudicado,
-        var e when e != null && e.Contains("CANCELADO")  => EstadoProceso.Cancelado,
-        var e when e != null && e.Contains("CERRADO")    => EstadoProceso.Cerrado,
-        _ => EstadoProceso.Activo
+        var m when m != null && m.Contains("SOLICITUD DE INFORMACI") => ClasificacionRegimen.Rfi,
+        var m when m != null && m.Contains("GIMEN ESPECIAL")         => ClasificacionRegimen.RegimenEspecial,
+        _ => ClasificacionRegimen.Ley80
     };
+
+    /// <summary>
+    /// Detecta el sufijo "(con ofertas)" que distingue un proceso de régimen especial
+    /// transaccional (con ofertas reales) de uno puramente publicitario (SPEC-03).
+    /// </summary>
+    public bool EsConOfertas() =>
+        NormalizarModalidad(Modalidad)?.Contains("(CON OFERTAS)") == true;
+
+    /// <summary>
+    /// Determina si el tipo de contrato corresponde al régimen ESAL
+    /// (Decreto 092 de 2017) para entidades sin ánimo de lucro (SPEC-07).
+    /// </summary>
+    public bool EsElegibleEsal() =>
+        TipoContrato?.Contains("092", StringComparison.OrdinalIgnoreCase) == true &&
+        TipoContrato.Contains("2017", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Parsea <c>categorias_adicionales</c> (lista separada por comas de códigos "V1.XXXXXXXX")
+    /// y retorna los códigos sin el prefijo "V1." (SPEC-08).
+    /// </summary>
+    public List<string> ObtenerCategoriasAdicionales()
+    {
+        if (string.IsNullOrWhiteSpace(CategoriasAdicionales))
+            return [];
+
+        return CategoriasAdicionales
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(c => c.StartsWith("V1.", StringComparison.OrdinalIgnoreCase) ? c[3..] : c)
+            .ToList();
+    }
+
+    public EstadoProceso ObtenerEstado()
+    {
+        if (EsAdjudicado())
+            return EstadoProceso.Adjudicado;
+
+        return Estado?.ToUpperInvariant() switch
+        {
+            var e when e != null && e.Contains("DESIERTO")     => EstadoProceso.Desierto,
+            var e when e != null && e.Contains("CANCELADO")    => EstadoProceso.Cancelado,
+            var e when e != null && e.Contains("SUSPENDIDO")   => EstadoProceso.Suspendido,
+            var e when e != null && e.Contains("CERRADO")      => EstadoProceso.Cerrado,
+            var e when e != null && e.Contains("SELECCIONADO") => EstadoProceso.Seleccionado,
+            _ => EstadoProceso.Activo
+        };
+    }
+
+    private bool EsAdjudicado() =>
+        Adjudicado?.Equals("Si", StringComparison.OrdinalIgnoreCase) == true ||
+        Adjudicado?.Equals("true", StringComparison.OrdinalIgnoreCase) == true ||
+        (!string.IsNullOrWhiteSpace(NombreProveedorAdjudicado) &&
+         !string.IsNullOrWhiteSpace(FechaAdjudicacion));
+
+    private static string? NormalizarModalidad(string? modalidad) =>
+        modalidad?.ToUpperInvariant();
 
     private static bool EsAbierto(string? value) =>
         value?.Equals("Abierto", StringComparison.OrdinalIgnoreCase) == true;

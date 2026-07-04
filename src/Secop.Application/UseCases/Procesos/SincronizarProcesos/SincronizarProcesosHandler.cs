@@ -5,6 +5,7 @@ using Secop.Application.Interfaces;
 using Secop.Domain.Constants;
 using Secop.Domain.Entities;
 using Secop.Domain.Enums;
+using Secop.Domain.Services;
 using Secop.Domain.ValueObjects;
 
 namespace Secop.Application.UseCases.Procesos.SincronizarProcesos;
@@ -18,6 +19,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
     private readonly IEmbeddingService _embedding;
     private readonly IScoringService _scoring;
     private readonly IAlertaService _alertas;
+    private readonly IFiltrosProcesoPolicy _filtros;
     private readonly ILogger<SincronizarProcesosHandler> _logger;
 
     private const float UmbralSimilitudMinima = 0.40f;
@@ -31,6 +33,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         IEmbeddingService embedding,
         IScoringService scoring,
         IAlertaService alertas,
+        IFiltrosProcesoPolicy filtros,
         ILogger<SincronizarProcesosHandler> logger)
     {
         _secopApi = secopApi;
@@ -40,6 +43,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         _embedding = embedding;
         _scoring = scoring;
         _alertas = alertas;
+        _filtros = filtros;
         _logger = logger;
     }
 
@@ -77,6 +81,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
         var dtosUnspscAplicables = dtosUnspscValidos
             .Where(d => d.EstaAbiertoParaAplicar())
+            .Where(d => !DebeDescartarsePorPublicitario(d))
             .ToList();
 
         _logger.LogInformation(
@@ -95,6 +100,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         var dtosKeywordOnly = todasPalabrasClave.Count > 0
             ? tareaRecientes.Result
                 .Where(d => d.EsValido() && d.EstaAbiertoParaAplicar() && !idsUnspsc.Contains(d.Id!))
+                .Where(d => !DebeDescartarsePorPublicitario(d))
                 .Where(d => ProcesoCoincideConAlgunaPalabraClave(todasPalabrasClave, d.Objeto))
                 .GroupBy(d => d.Id!)
                 .Select(g => g.First())
@@ -164,6 +170,9 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
                 if (candidato.EsKeywordOnly)
                     puntaje.AgregarAdvertencia(AdvertenciasPuntaje.EncontradoPorTexto);
 
+                if (DetectorRegimenEspecial.EsPosibleRegimenEspecial(proceso.NombreEntidad))
+                    puntaje.AgregarAdvertencia(AdvertenciasPuntaje.PosibleRegimenEspecial);
+
                 await _puntajes.GuardarAsync(puntaje, ct);
 
                 if (puntaje.PuntajeTotal >= UmbralAlertaProponer && proveedor.TelegramChatId.HasValue)
@@ -180,6 +189,15 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         return nuevos;
     }
 
+    /// <summary>
+    /// Descarta procesos de régimen especial puramente publicitarios (sin "(con ofertas)")
+    /// cuando el toggle configurado lo indica (SPEC-03). Nunca descarta procesos "con ofertas".
+    /// </summary>
+    private bool DebeDescartarsePorPublicitario(global::Secop.Application.DTOs.SecopProcesoDto dto) =>
+        _filtros.DescartarSoloPublicitario &&
+        dto.ObtenerClasificacion() == ClasificacionRegimen.RegimenEspecial &&
+        !dto.EsConOfertas();
+
     private static Proceso MapearProceso(global::Secop.Application.DTOs.SecopProcesoDto dto)
     {
         _ = decimal.TryParse(dto.Presupuesto, out var presupuesto);
@@ -187,6 +205,11 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         _ = DateTime.TryParse(dto.FechaUltimaPublicacion, out var fechaPublicacion);
         fechaCierre = DateTime.SpecifyKind(fechaCierre, DateTimeKind.Utc);
         fechaPublicacion = DateTime.SpecifyKind(fechaPublicacion, DateTimeKind.Utc);
+
+        decimal? valorAdjudicacion = decimal.TryParse(dto.ValorTotalAdjudicacion, out var valor) ? valor : null;
+        DateTime? fechaAdjudicacion = DateTime.TryParse(dto.FechaAdjudicacion, out var fechaAdj)
+            ? DateTime.SpecifyKind(fechaAdj, DateTimeKind.Utc)
+            : null;
 
         return new Proceso(
             id: dto.Id!,
@@ -200,9 +223,24 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             nombreEntidad: dto.NombreEntidad ?? string.Empty,
             nitEntidad: dto.NitEntidad ?? string.Empty,
             departamentoEntidad: dto.DepartamentoEntidad ?? string.Empty,
-            urlProceso: dto.UrlProceso ?? string.Empty
+            urlProceso: dto.UrlProceso ?? string.Empty,
+            clasificacion: dto.ObtenerClasificacion(),
+            esConOfertas: dto.EsConOfertas(),
+            tipoContrato: dto.TipoContrato,
+            adjudicadoA: dto.NombreProveedorAdjudicado,
+            valorAdjudicacion: valorAdjudicacion,
+            fechaAdjudicacion: fechaAdjudicacion,
+            categoriasAdicionales: dto.ObtenerCategoriasAdicionales(),
+            proveedoresInvitados: ParsearEntero(dto.ProveedoresInvitados),
+            proveedoresQueManifestaron: ParsearEntero(dto.ProveedoresQueManifestaron),
+            respuestasAlProcedimiento: ParsearEntero(dto.RespuestasAlProcedimiento),
+            conteoRespuestasOfertas: ParsearEntero(dto.ConteoRespuestasOfertas),
+            proveedoresUnicosCon: ParsearEntero(dto.ProveedoresUnicosCon)
         );
     }
+
+    private static int? ParsearEntero(string? valor) =>
+        int.TryParse(valor, out var resultado) ? resultado : null;
 
     private static bool ProcesoCoincideConPalabrasClave(Proveedor proveedor, string? objetoProceso)
     {

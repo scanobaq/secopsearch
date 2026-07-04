@@ -25,7 +25,7 @@ public class SecopApiClientTests
     // ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task ObtenerProcesosRecientes_OnlyExactCodes_BuildsInClause_NoLike()
+    public async Task ObtenerProcesosRecientes_OnlyExactCodes_BuildsInClause_NoLikeOnCodigoPrincipal()
     {
         var (client, uris) = CrearClienteConCaptura();
 
@@ -34,7 +34,7 @@ public class SecopApiClientTests
 
         var query = Uri.UnescapeDataString(uris[0].Query);
         query.Should().Contain("IN('V1.80101500','V1.43211503')");
-        query.Should().NotContain("LIKE");
+        query.Should().NotContain("codigo_principal_de_categoria LIKE");
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public class SecopApiClientTests
             Desde, codigosClase: ["801015"]);
 
         var query = Uri.UnescapeDataString(uris[0].Query);
-        query.Should().Contain("(codigo_principal_de_categoria LIKE 'V1.801015%')");
+        query.Should().Contain("codigo_principal_de_categoria LIKE 'V1.801015%'");
         query.Should().NotContain(" IN(");
     }
 
@@ -79,7 +79,36 @@ public class SecopApiClientTests
             codigosClase: []);
 
         var query = Uri.UnescapeDataString(uris[0].Query);
-        query.Should().NotContain("LIKE");
+        query.Should().NotContain("codigo_principal_de_categoria LIKE");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SPEC-08: categorias_adicionales included in WHERE clause
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ObtenerProcesosRecientes_ExactCodes_AlsoMatchesCategoriasAdicionales()
+    {
+        var (client, uris) = CrearClienteConCaptura();
+
+        await client.ObtenerProcesosRecientesAsync(
+            Desde, codigosUnspsc: ["80101500"]);
+
+        var query = Uri.UnescapeDataString(uris[0].Query);
+        query.Should().Contain("categorias_adicionales LIKE '%V1.80101500%'");
+        query.Should().Contain(" OR ");
+    }
+
+    [Fact]
+    public async Task ObtenerProcesosRecientes_ClassCodes_AlsoMatchesCategoriasAdicionales()
+    {
+        var (client, uris) = CrearClienteConCaptura();
+
+        await client.ObtenerProcesosRecientesAsync(
+            Desde, codigosClase: ["801015"]);
+
+        var query = Uri.UnescapeDataString(uris[0].Query);
+        query.Should().Contain("categorias_adicionales LIKE '%V1.801015%'");
     }
 
     // ─────────────────────────────────────────────────────────────────────────

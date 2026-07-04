@@ -24,6 +24,13 @@ public class ScoringService(ILogger<ScoringService> logger) : IScoringService
     {
         var advertencias = new List<string>();
 
+        // Inhabilitante automático: solo ESAL (Decreto 092 de 2017) — mismo mecanismo que RUP vencido
+        if (proceso.EsSoloEsal())
+        {
+            advertencias.Add(AdvertenciasPuntaje.SoloEsal);
+            return Task.FromResult(Puntaje.Inhabilitado(proceso.Id, proveedor.Id, advertencias));
+        }
+
         // Inhabilitante automático: RUP vencido
         // if (!proveedor.RupVigente())
         // {
@@ -53,21 +60,20 @@ public class ScoringService(ILogger<ScoringService> logger) : IScoringService
         // if (dias <= 3)
         //     advertencias.Add(AdvertenciasPuntaje.PlazoMuyCorto);
 
-        // Componente 4: Competencia estimada (12 pts) — v1 simplificado
-        // Si el proceso ya fue desierto una vez, hay menos competencia
-        //float pCompetencia = proceso.EsDesierto() ? 12f : 6f;
+        // Componente 4: Competencia estimada (12 pts) — normalizada por contadores reales (SPEC-06)
+        float pCompetencia = CalcularCompetencia(proceso);
 
         // Componente 5: Historial de la entidad (8 pts) — v1 simplificado
         // Valor neutro hasta tener historial real de adjudicaciones
         //float pEntidad = 4f;
 
         //float total = pSimilitud + pRequisitos + pTiempo + pCompetencia + pEntidad;
-        float total = pSimilitud + pRequisitos + 0 + 0 + 0;
+        float total = pSimilitud + pRequisitos + 0 + pCompetencia + 0;
         total = Math.Min(total, 100f); // Cap defensivo
 
         logger.LogInformation(
-            "Puntaje calculado para Proceso {ProcesoId} y Proveedor {ProveedorId}: Total={Total}, Similitud={Similitud}, Requisitos={Requisitos}",
-            proceso.Id, proveedor.Id, total, pSimilitud, pRequisitos);
+            "Puntaje calculado para Proceso {ProcesoId} y Proveedor {ProveedorId}: Total={Total}, Similitud={Similitud}, Requisitos={Requisitos}, Competencia={Competencia}",
+            proceso.Id, proveedor.Id, total, pSimilitud, pRequisitos, pCompetencia);
 
         var etiqueta = total switch
         {
@@ -83,9 +89,42 @@ public class ScoringService(ILogger<ScoringService> logger) : IScoringService
             puntajeSimilitud: pSimilitud,
             puntajeRequisitos: pRequisitos,
             puntajeTiempo: 0,//pTiempo,
-            puntajeCompetencia: 0,//pCompetencia,
+            puntajeCompetencia: pCompetencia,
             puntajeEntidad: 0,//pEntidad,
             etiqueta: etiqueta,
             advertencias: advertencias));
+    }
+
+    /// <summary>
+    /// Normaliza la competencia estimada (0–12 pts) a partir de los contadores reales
+    /// del proceso. Menos competidores → puntaje más alto (menos competencia para el proveedor).
+    /// Si no hay ningún contador disponible (proceso aún no cerró), retorna un valor neutro.
+    /// </summary>
+    private static float CalcularCompetencia(Proceso proceso)
+    {
+        if (proceso.ProveedoresInvitados is null &&
+            proceso.ProveedoresQueManifestaron is null &&
+            proceso.RespuestasAlProcedimiento is null &&
+            proceso.ConteoRespuestasOfertas is null &&
+            proceso.ProveedoresUnicosCon is null)
+        {
+            return 6f; // Neutral — sin señal aún
+        }
+
+        int competidores = proceso.ProveedoresUnicosCon
+            ?? proceso.ConteoRespuestasOfertas
+            ?? proceso.RespuestasAlProcedimiento
+            ?? proceso.ProveedoresQueManifestaron
+            ?? proceso.ProveedoresInvitados
+            ?? 0;
+
+        return competidores switch
+        {
+            0 => 12f,
+            1 => 10f,
+            <= 3 => 8f,
+            <= 6 => 5f,
+            _ => 2f
+        };
     }
 }

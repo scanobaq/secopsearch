@@ -6,5 +6,7 @@ public enum EstadoProceso
     Desierto,
     Adjudicado,
     Cancelado,
-    Cerrado
+    Cerrado,
+    Seleccionado,
+    Suspendido
 }

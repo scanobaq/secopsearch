@@ -28,6 +28,28 @@ public class ProcesoConfiguration : IEntityTypeConfiguration<Proceso>
         builder.Property(p => p.UrlProceso)          .HasColumnName("url_proceso");
         builder.Property(p => p.SincronizadoEn)     .HasColumnName("sincronizado_en");
 
+        // ── Clasificación y filtros (SPEC-01 a SPEC-09) ─────────────────────
+        builder.Property(p => p.Clasificacion)       .HasColumnName("clasificacion").HasConversion<string>();
+        builder.Property(p => p.EsConOfertas)        .HasColumnName("es_con_ofertas");
+        builder.Property(p => p.TipoContrato)        .HasColumnName("tipo_contrato");
+
+        // ── Adjudicación real ────────────────────────────────────────────────
+        builder.Property(p => p.AdjudicadoA)         .HasColumnName("adjudicado_a");
+        builder.Property(p => p.ValorAdjudicacion)   .HasColumnName("valor_adjudicacion").HasColumnType("decimal(18,2)");
+        builder.Property(p => p.FechaAdjudicacion)   .HasColumnName("fecha_adjudicacion");
+
+        // ── Categorías UNSPSC adicionales ────────────────────────────────────
+        builder.Property(p => p.CategoriasAdicionales)
+            .HasColumnName("categorias_adicionales")
+            .HasColumnType("text[]");
+
+        // ── Señales de competencia ───────────────────────────────────────────
+        builder.Property(p => p.ProveedoresInvitados)          .HasColumnName("proveedores_invitados");
+        builder.Property(p => p.ProveedoresQueManifestaron)    .HasColumnName("proveedores_que_manifestaron");
+        builder.Property(p => p.RespuestasAlProcedimiento)     .HasColumnName("respuestas_al_procedimiento");
+        builder.Property(p => p.ConteoRespuestasOfertas)       .HasColumnName("conteo_respuestas_ofertas");
+        builder.Property(p => p.ProveedoresUnicosCon)          .HasColumnName("proveedores_unicos_con");
+
         // pgvector: vector(1536) — texto embebido de Titulo + Objeto
         var vectorConverter = new ValueConverter<float[]?, Vector?>(
             v => v == null ? null : new Vector(v),
