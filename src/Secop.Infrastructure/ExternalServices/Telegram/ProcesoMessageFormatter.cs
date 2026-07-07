@@ -30,12 +30,31 @@ public static class ProcesoMessageFormatter
             🏛 Entidad: <b>{EscapeHtml(proceso.NombreEntidad)}</b>
             💰 Presupuesto: <b>{presupuesto}</b>
             📅 Cierre: {cierreTexto}
-            🏷 Modalidad: {proceso.Modalidad}
+            🏷 Modalidad: {NombreModalidad(proceso)}
             🏢 Empresa recomendada: <b>{EscapeHtml(proveedor.Nombre)}</b>
             {advertencias}
             🔗 <a href="{proceso.UrlProceso}">Ver proceso en SECOP II</a>
             """;
     }
+
+    // El tipo real de proceso vive repartido en dos campos del dominio:
+    // Clasificacion (Rfi/RegimenEspecial, agregado en SPEC-02) toma precedencia
+    // porque Modalidad cae en Otro para esos casos por diseño (ver SecopProcesoDtoTests).
+    private static string NombreModalidad(Proceso proceso) => proceso.Clasificacion switch
+    {
+        ClasificacionRegimen.Rfi => "Solicitud de información",
+        ClasificacionRegimen.RegimenEspecial => "Régimen especial",
+        _ => proceso.Modalidad switch
+        {
+            ModalidadContrato.LicitacionPublica => "Licitación pública",
+            ModalidadContrato.SeleccionAbreviada => "Selección abreviada",
+            ModalidadContrato.ConcursoMeritos => "Concurso de méritos",
+            ModalidadContrato.ContratacionDirecta => "Contratación directa",
+            ModalidadContrato.MinimaCuantia => "Mínima cuantía",
+            ModalidadContrato.AcuerdoMarcoPrecios => "Acuerdo marco de precios",
+            _ => "Otro"
+        }
+    };
 
     private static string EscapeHtml(string text) =>
         text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
