@@ -8,7 +8,6 @@ public class ProcesoTests
 {
     private static Proceso CrearProceso(
         ClasificacionRegimen clasificacion = ClasificacionRegimen.Ley80,
-        bool esConOfertas = false,
         string? tipoContrato = null,
         string? adjudicadoA = null,
         decimal? valorAdjudicacion = null,
@@ -33,7 +32,6 @@ public class ProcesoTests
             departamentoEntidad: "Bogotá",
             urlProceso: "https://secop.gov.co",
             clasificacion: clasificacion,
-            esConOfertas: esConOfertas,
             tipoContrato: tipoContrato,
             adjudicadoA: adjudicadoA,
             valorAdjudicacion: valorAdjudicacion,
@@ -51,7 +49,6 @@ public class ProcesoTests
         var fecha = DateTime.UtcNow;
         var proceso = CrearProceso(
             clasificacion: ClasificacionRegimen.RegimenEspecial,
-            esConOfertas: true,
             tipoContrato: "Prestación de servicios",
             adjudicadoA: "Proveedor S.A.",
             valorAdjudicacion: 500_000m,
@@ -64,7 +61,6 @@ public class ProcesoTests
             proveedoresUnicosCon: 2);
 
         proceso.Clasificacion.Should().Be(ClasificacionRegimen.RegimenEspecial);
-        proceso.EsConOfertas.Should().BeTrue();
         proceso.TipoContrato.Should().Be("Prestación de servicios");
         proceso.AdjudicadoA.Should().Be("Proveedor S.A.");
         proceso.ValorAdjudicacion.Should().Be(500_000m);

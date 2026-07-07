@@ -25,7 +25,6 @@ public class AddSecopClassificationFieldsMigrationTests
 
     [Theory]
     [InlineData("clasificacion")]
-    [InlineData("es_con_ofertas")]
     [InlineData("tipo_contrato")]
     [InlineData("adjudicado_a")]
     [InlineData("valor_adjudicacion")]
@@ -53,5 +52,25 @@ public class AddSecopClassificationFieldsMigrationTests
         var migraciones = context.Database.GetMigrations();
 
         migraciones.Should().Contain(m => m.Contains("AddSecopClassificationFields"));
+    }
+
+    [Fact]
+    public void CreateScript_DoesNotInclude_EsConOfertasColumn()
+    {
+        using var context = CrearContexto();
+
+        var script = context.Database.GenerateCreateScript();
+
+        script.Should().NotContain("es_con_ofertas");
+    }
+
+    [Fact]
+    public void MigrationsHistory_IncludesRemoveEsConOfertas()
+    {
+        using var context = CrearContexto();
+
+        var migraciones = context.Database.GetMigrations();
+
+        migraciones.Should().Contain(m => m.Contains("RemoveEsConOfertas"));
     }
 }

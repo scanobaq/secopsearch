@@ -19,7 +19,6 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
     private readonly IEmbeddingService _embedding;
     private readonly IScoringService _scoring;
     private readonly IAlertaService _alertas;
-    private readonly IFiltrosProcesoPolicy _filtros;
     private readonly ILogger<SincronizarProcesosHandler> _logger;
 
     private const float UmbralSimilitudMinima = 0.40f;
@@ -33,7 +32,6 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         IEmbeddingService embedding,
         IScoringService scoring,
         IAlertaService alertas,
-        IFiltrosProcesoPolicy filtros,
         ILogger<SincronizarProcesosHandler> logger)
     {
         _secopApi = secopApi;
@@ -43,7 +41,6 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         _embedding = embedding;
         _scoring = scoring;
         _alertas = alertas;
-        _filtros = filtros;
         _logger = logger;
     }
 
@@ -81,7 +78,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
         var dtosUnspscAplicables = dtosUnspscValidos
             .Where(d => d.EstaAbiertoParaAplicar())
-            .Where(d => !DebeDescartarsePorPublicitario(d))
+            .Where(d => !DebeDescartarse(d))
             .ToList();
 
         _logger.LogInformation(
@@ -100,7 +97,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
         var dtosKeywordOnly = todasPalabrasClave.Count > 0
             ? tareaRecientes.Result
                 .Where(d => d.EsValido() && d.EstaAbiertoParaAplicar() && !idsUnspsc.Contains(d.Id!))
-                .Where(d => !DebeDescartarsePorPublicitario(d))
+                .Where(d => !DebeDescartarse(d))
                 .Where(d => ProcesoCoincideConAlgunaPalabraClave(todasPalabrasClave, d.Objeto))
                 .GroupBy(d => d.Id!)
                 .Select(g => g.First())
@@ -190,13 +187,11 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
     }
 
     /// <summary>
-    /// Descarta procesos de régimen especial puramente publicitarios (sin "(con ofertas)")
-    /// cuando el toggle configurado lo indica (SPEC-03). Nunca descarta procesos "con ofertas".
+    /// Descarta siempre los procesos de Régimen Especial y de RFI (decisión de negocio):
+    /// solo los procesos Ley80 se tienen en cuenta para posible postulación.
     /// </summary>
-    private bool DebeDescartarsePorPublicitario(global::Secop.Application.DTOs.SecopProcesoDto dto) =>
-        _filtros.DescartarSoloPublicitario &&
-        dto.ObtenerClasificacion() == ClasificacionRegimen.RegimenEspecial &&
-        !dto.EsConOfertas();
+    private static bool DebeDescartarse(global::Secop.Application.DTOs.SecopProcesoDto dto) =>
+        dto.ObtenerClasificacion() is ClasificacionRegimen.RegimenEspecial or ClasificacionRegimen.Rfi;
 
     private static Proceso MapearProceso(global::Secop.Application.DTOs.SecopProcesoDto dto)
     {
@@ -225,7 +220,6 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             departamentoEntidad: dto.DepartamentoEntidad ?? string.Empty,
             urlProceso: dto.UrlProceso ?? string.Empty,
             clasificacion: dto.ObtenerClasificacion(),
-            esConOfertas: dto.EsConOfertas(),
             tipoContrato: dto.TipoContrato,
             adjudicadoA: dto.NombreProveedorAdjudicado,
             valorAdjudicacion: valorAdjudicacion,

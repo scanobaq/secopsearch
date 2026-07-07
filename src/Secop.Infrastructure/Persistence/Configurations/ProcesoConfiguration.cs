@@ -30,7 +30,6 @@ public class ProcesoConfiguration : IEntityTypeConfiguration<Proceso>
 
         // ── Clasificación y filtros (SPEC-01 a SPEC-09) ─────────────────────
         builder.Property(p => p.Clasificacion)       .HasColumnName("clasificacion").HasConversion<string>();
-        builder.Property(p => p.EsConOfertas)        .HasColumnName("es_con_ofertas");
         builder.Property(p => p.TipoContrato)        .HasColumnName("tipo_contrato");
 
         // ── Adjudicación real ────────────────────────────────────────────────

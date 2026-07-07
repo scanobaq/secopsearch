@@ -56,26 +56,6 @@ public class SecopProcesoDtoTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SPEC-03: Publicitario vs con-ofertas toggle
-    // ─────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void EsConOfertas_DetectaSufijoConOfertas()
-    {
-        var dto = new SecopProcesoDto { Modalidad = "Régimen Especial (con ofertas)" };
-
-        dto.EsConOfertas().Should().BeTrue();
-    }
-
-    [Fact]
-    public void EsConOfertas_FalseCuandoNoHaySufijo()
-    {
-        var dto = new SecopProcesoDto { Modalidad = "Régimen Especial" };
-
-        dto.EsConOfertas().Should().BeFalse();
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
     // SPEC-05: Real adjudication state
     // ─────────────────────────────────────────────────────────────────────────
 

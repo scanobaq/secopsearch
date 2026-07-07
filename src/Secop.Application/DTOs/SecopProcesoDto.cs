@@ -131,13 +131,6 @@ public class SecopProcesoDto
     };
 
     /// <summary>
-    /// Detecta el sufijo "(con ofertas)" que distingue un proceso de régimen especial
-    /// transaccional (con ofertas reales) de uno puramente publicitario (SPEC-03).
-    /// </summary>
-    public bool EsConOfertas() =>
-        NormalizarModalidad(Modalidad)?.Contains("(CON OFERTAS)") == true;
-
-    /// <summary>
     /// Determina si el tipo de contrato corresponde al régimen ESAL
     /// (Decreto 092 de 2017) para entidades sin ánimo de lucro (SPEC-07).
     /// </summary>

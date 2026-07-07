@@ -21,7 +21,6 @@ public class Proceso
 
     // ── Clasificación y filtros (SPEC-01 a SPEC-09) ─────────────────────────
     public ClasificacionRegimen Clasificacion { get; private set; }
-    public bool EsConOfertas { get; private set; }
     public string? TipoContrato { get; private set; }
 
     // ── Adjudicación real ────────────────────────────────────────────────────
@@ -63,7 +62,6 @@ public class Proceso
         string departamentoEntidad,
         string urlProceso,
         ClasificacionRegimen clasificacion = ClasificacionRegimen.Ley80,
-        bool esConOfertas = false,
         string? tipoContrato = null,
         string? adjudicadoA = null,
         decimal? valorAdjudicacion = null,
@@ -90,7 +88,6 @@ public class Proceso
         SincronizadoEn = DateTime.UtcNow;
 
         Clasificacion = clasificacion;
-        EsConOfertas = esConOfertas;
         TipoContrato = tipoContrato;
         AdjudicadoA = adjudicadoA;
         ValorAdjudicacion = valorAdjudicacion;

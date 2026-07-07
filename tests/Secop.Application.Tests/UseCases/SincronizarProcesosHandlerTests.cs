@@ -19,17 +19,11 @@ public class SincronizarProcesosHandlerTests
     private readonly Mock<IEmbeddingService> _embedding = new();
     private readonly Mock<IScoringService> _scoring = new();
     private readonly Mock<IAlertaService> _alertas = new();
-    private readonly Mock<IFiltrosProcesoPolicy> _filtros = new();
-
-    public SincronizarProcesosHandlerTests()
-    {
-        _filtros.Setup(f => f.DescartarSoloPublicitario).Returns(true);
-    }
 
     private SincronizarProcesosHandler CrearHandler() =>
         new(_secopApi.Object, _procesos.Object, _proveedores.Object,
             _puntajes.Object, _embedding.Object, _scoring.Object,
-            _alertas.Object, _filtros.Object, NullLogger<SincronizarProcesosHandler>.Instance);
+            _alertas.Object, NullLogger<SincronizarProcesosHandler>.Instance);
 
     private static Proveedor CrearProveedor(
         List<string>? codigosUnspsc = null,
@@ -406,18 +400,18 @@ public class SincronizarProcesosHandlerTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SPEC-03: Toggle publicitario — descarta solo publicitario por defecto
+    // Regla de negocio simplificada: RegimenEspecial y Rfi se descartan siempre,
+    // sin excepción de "con ofertas" y sin toggle configurable.
     // ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Handle_RegimenEspecialPublicitarioSinOfertas_DescartadoCuandoToggleActivo()
+    public async Task Handle_RegimenEspecial_SiempreDescartado()
     {
         const string procesoId = "PROC-PUBLICITARIO-001";
         var embedding = new float[] { 0.5f };
         var proveedor = CrearProveedor(palabrasClave: null, embedding: embedding);
         var dto = CrearDtoAbierto(procesoId, modalidad: "Régimen Especial");
 
-        _filtros.Setup(f => f.DescartarSoloPublicitario).Returns(true);
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
         _secopApi
@@ -435,14 +429,13 @@ public class SincronizarProcesosHandlerTests
     }
 
     [Fact]
-    public async Task Handle_RegimenEspecialConOfertas_NoDescartadoAunConToggleActivo()
+    public async Task Handle_RegimenEspecialConOfertas_TambienDescartado()
     {
         const string procesoId = "PROC-CONOFERTAS-001";
         var embedding = new float[] { 0.5f };
         var proveedor = CrearProveedor(palabrasClave: null, embedding: embedding);
         var dto = CrearDtoAbierto(procesoId, modalidad: "Régimen Especial (con ofertas)");
 
-        _filtros.Setup(f => f.DescartarSoloPublicitario).Returns(true);
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
         _secopApi
@@ -451,29 +444,22 @@ public class SincronizarProcesosHandlerTests
                 It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([dto]);
-        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(embedding);
-        _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
-            .ReturnsAsync(0.3f);
 
         var handler = CrearHandler();
         var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
 
-        result.Should().Be(1);
-        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.Should().Be(0);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task Handle_RegimenEspecialPublicitario_NoDescartadoCuandoToggleDesactivado()
+    public async Task Handle_Rfi_SiempreDescartado()
     {
-        const string procesoId = "PROC-TOGGLEOFF-001";
+        const string procesoId = "PROC-RFI-001";
         var embedding = new float[] { 0.5f };
         var proveedor = CrearProveedor(palabrasClave: null, embedding: embedding);
-        var dto = CrearDtoAbierto(procesoId, modalidad: "Régimen Especial");
+        var dto = CrearDtoAbierto(procesoId, modalidad: "Solicitud de información a los Proveedores");
 
-        _filtros.Setup(f => f.DescartarSoloPublicitario).Returns(false);
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
         _secopApi
@@ -482,18 +468,12 @@ public class SincronizarProcesosHandlerTests
                 It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([dto]);
-        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(embedding);
-        _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
-            .ReturnsAsync(0.3f);
 
         var handler = CrearHandler();
         var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
 
-        result.Should().Be(1);
-        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.Should().Be(0);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
