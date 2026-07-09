@@ -149,9 +149,19 @@ public class SecopProcesoDto
 
         return CategoriasAdicionales
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Select(c => c.StartsWith("V1.", StringComparison.OrdinalIgnoreCase) ? c[3..] : c)
+            .Select(QuitarPrefijoV1)
             .ToList();
     }
+
+    // El campo real categorias_adicionales del API nunca trae punto tras "V1"
+    // (ej. "V172101500"), a diferencia de codigo_principal_de_categoria que sí
+    // lo trae ("V1.80111500"). Se soportan ambos formatos por las dudas.
+    private static string QuitarPrefijoV1(string codigo) => codigo switch
+    {
+        var c when c.StartsWith("V1.", StringComparison.OrdinalIgnoreCase) => c[3..],
+        var c when c.StartsWith("V1", StringComparison.OrdinalIgnoreCase) => c[2..],
+        _ => codigo
+    };
 
     public EstadoProceso ObtenerEstado()
     {

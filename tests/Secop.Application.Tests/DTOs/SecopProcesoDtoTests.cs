@@ -115,6 +115,17 @@ public class SecopProcesoDtoTests
     }
 
     [Fact]
+    public void ObtenerCategoriasAdicionales_FormatoRealSinPunto_ParseaCorrectamente()
+    {
+        // El campo real del API nunca trae punto tras "V1" (confirmado en vivo:
+        // "V172101500, V172103300"), a diferencia de codigo_principal_de_categoria
+        // que sí lo trae ("V1.80111500").
+        var dto = new SecopProcesoDto { CategoriasAdicionales = "V172101500, V172103300, V172141000" };
+
+        dto.ObtenerCategoriasAdicionales().Should().BeEquivalentTo(["72101500", "72103300", "72141000"]);
+    }
+
+    [Fact]
     public void ObtenerCategoriasAdicionales_NuloOVacio_RetornaListaVacia()
     {
         var dto = new SecopProcesoDto { CategoriasAdicionales = null };
