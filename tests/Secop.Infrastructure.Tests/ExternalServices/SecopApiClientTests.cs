@@ -51,7 +51,7 @@ public class SecopApiClientTests
     }
 
     [Fact]
-    public async Task ObtenerProcesosRecientes_BothExactAndClass_BuildsCombinedClause()
+    public async Task ObtenerProcesosRecientes_BothExactAndClass_BuildsSeparateBatchQueries()
     {
         var (client, uris) = CrearClienteConCaptura();
 
@@ -60,12 +60,12 @@ public class SecopApiClientTests
             codigosUnspsc: ["80101500"],
             codigosClase: ["431110"]);
 
-        var query = Uri.UnescapeDataString(uris[0].Query);
-        query.Should().Contain("IN('V1.80101500')");
-        query.Should().Contain("LIKE 'V1.431110%'");
-        query.Should().Contain(" OR ");
-        // Both predicates wrapped in outer parens
-        query.Should().MatchRegex(@"\(codigo_principal.*OR.*codigo_principal");
+        // Exactos y clases van en llamadas HTTP separadas (lotes distintos)
+        uris.Should().HaveCount(2);
+        var queries = uris.Select(u => Uri.UnescapeDataString(u.Query)).ToList();
+
+        queries.Should().ContainSingle(q => q.Contains("IN('V1.80101500')"));
+        queries.Should().ContainSingle(q => q.Contains("LIKE 'V1.431110%'"));
     }
 
     [Fact]
@@ -83,32 +83,59 @@ public class SecopApiClientTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SPEC-08: categorias_adicionales included in WHERE clause
+    // Bug 414: categorias_adicionales removido (predicado roto, nunca matchea
+    // porque el campo real no tiene punto tras "V1"), y troceo en lotes para
+    // no generar una URL gigante que el servidor rechaza con 414
     // ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task ObtenerProcesosRecientes_ExactCodes_AlsoMatchesCategoriasAdicionales()
+    public async Task ObtenerProcesosRecientes_NingunaUrlContieneCategoriasAdicionales()
     {
         var (client, uris) = CrearClienteConCaptura();
 
         await client.ObtenerProcesosRecientesAsync(
-            Desde, codigosUnspsc: ["80101500"]);
+            Desde,
+            codigosUnspsc: ["80101500"],
+            codigosClase: ["801015"]);
 
-        var query = Uri.UnescapeDataString(uris[0].Query);
-        query.Should().Contain("categorias_adicionales LIKE '%V1.80101500%'");
-        query.Should().Contain(" OR ");
+        uris.Should().NotBeEmpty();
+        foreach (var uri in uris)
+        {
+            var query = Uri.UnescapeDataString(uri.Query);
+            query.Should().NotContain("categorias_adicionales");
+        }
     }
 
     [Fact]
-    public async Task ObtenerProcesosRecientes_ClassCodes_AlsoMatchesCategoriasAdicionales()
+    public async Task ObtenerProcesosRecientes_MasDe40CodigosExactos_HaceMultiplesLlamadas()
     {
         var (client, uris) = CrearClienteConCaptura();
 
-        await client.ObtenerProcesosRecientesAsync(
-            Desde, codigosClase: ["801015"]);
+        var codigos = Enumerable.Range(1, 100).Select(i => $"801{i:D5}").ToList();
 
-        var query = Uri.UnescapeDataString(uris[0].Query);
-        query.Should().Contain("categorias_adicionales LIKE '%V1.801015%'");
+        await client.ObtenerProcesosRecientesAsync(Desde, codigosUnspsc: codigos);
+
+        // 100 códigos en lotes de 40 -> 3 llamadas (40 + 40 + 20)
+        uris.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task ObtenerProcesosRecientes_ResultadosDuplicadosEntreLotes_SeDeduplicanPorId()
+    {
+        var handler = new SequencedHandler(
+        [
+            """[{"id_del_proceso":"P1"},{"id_del_proceso":"P2"}]""",
+            """[{"id_del_proceso":"P2"},{"id_del_proceso":"P3"}]""",
+        ]);
+        var http = new HttpClient(handler);
+        var client = new SecopApiClient(http, NullLogger<SecopApiClient>.Instance);
+
+        var codigos = Enumerable.Range(1, 80).Select(i => $"801{i:D5}").ToList();
+
+        var resultado = await client.ObtenerProcesosRecientesAsync(Desde, codigosUnspsc: codigos);
+
+        resultado.Should().HaveCount(3);
+        resultado.Select(p => p.Id).Should().BeEquivalentTo(["P1", "P2", "P3"]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -133,6 +160,32 @@ public class SecopApiClientTests
             var response = new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(_body, Encoding.UTF8, "application/json")
+            };
+            return Task.FromResult(response);
+        }
+    }
+
+    /// <summary>
+    /// Handler que devuelve un body distinto por cada llamada recibida, en el orden
+    /// en que las peticiones concurrentes llegan (usa un índice thread-safe).
+    /// </summary>
+    private sealed class SequencedHandler : HttpMessageHandler
+    {
+        private readonly string[] _bodies;
+        private int _index = -1;
+
+        public SequencedHandler(string[] bodies)
+        {
+            _bodies = bodies;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var i = Interlocked.Increment(ref _index) % _bodies.Length;
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(_bodies[i], Encoding.UTF8, "application/json")
             };
             return Task.FromResult(response);
         }

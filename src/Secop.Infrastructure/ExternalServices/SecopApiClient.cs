@@ -13,6 +13,12 @@ public class SecopApiClient : ISecopApiClient
     private const string DatasetProcesos = "p6dx-8zbt";
     private const string BaseUrl = "https://www.datos.gov.co/resource";
 
+    // Límite de códigos UNSPSC por consulta HTTP. Con muchos códigos combinados en un
+    // único $where la URL puede superar los ~8KB que soportan los front-ends nginx de
+    // datos.gov.co, y el servidor responde 414 Request-URI Too Large (bug confirmado
+    // en producción con 114 códigos). Trocear en lotes evita ese límite.
+    private const int MaxCodigosPorLote = 40;
+
     public SecopApiClient(HttpClient http, ILogger<SecopApiClient> logger)
     {
         _http = http;
@@ -36,31 +42,42 @@ public class SecopApiClient : ISecopApiClient
         var exactos = codigosUnspsc?.Distinct().ToList() ?? [];
         var clases = codigosClase?.Distinct().ToList() ?? [];
 
-        // Buscamos coincidencias tanto en codigo_principal_de_categoria (categoría principal)
-        // como en categorias_adicionales (SPEC-08) — un proceso puede calificar por cualquiera.
-        var unspscPredicados = new List<string>();
-        if (exactos.Count > 0)
-        {
-            var inClause = string.Join(",", exactos.Select(c => $"'V1.{c}'"));
-            unspscPredicados.Add($"codigo_principal_de_categoria IN({inClause})");
-            foreach (var codigo in exactos)
-                unspscPredicados.Add($"categorias_adicionales LIKE '%V1.{codigo}%'");
-        }
-        foreach (var clase in clases)
-        {
-            unspscPredicados.Add($"codigo_principal_de_categoria LIKE 'V1.{clase}%'");
-            unspscPredicados.Add($"categorias_adicionales LIKE '%V1.{clase}%'");
-        }
+        // Nota: NO filtramos por categorias_adicionales — ese predicado buscaba
+        // '%V1.{codigo}%' con punto, pero el campo real del dataset no tiene punto
+        // tras "V1" (ej. "V172101500"), así que nunca matcheaba nada. Además era el
+        // mayor contribuyente al tamaño de la URL que causaba el 414.
+        var predicadosPorLote = TrocearEnLotes(exactos, MaxCodigosPorLote)
+            .Select(lote => $"codigo_principal_de_categoria IN({string.Join(",", lote.Select(c => $"'V1.{c}'"))})")
+            .Concat(TrocearEnLotes(clases, MaxCodigosPorLote)
+                .Select(lote => string.Join(" OR ", lote.Select(c => $"codigo_principal_de_categoria LIKE 'V1.{c}%'"))))
+            .ToList();
 
-        var whereClause = filtroFecha;
-        if (unspscPredicados.Count > 0)
-            whereClause += $" AND ({string.Join(" OR ", unspscPredicados)})";
-
-        var where = Uri.EscapeDataString(whereClause);
         var order = Uri.EscapeDataString("fecha_de_ultima_publicaci DESC");
-        var url = $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$limit=1000&$order={order}";
 
-        return await EjecutarConsultaAsync(url, ct);
+        var urls = predicadosPorLote.Count == 0
+            ? [$"{BaseUrl}/{DatasetProcesos}.json?$where={Uri.EscapeDataString(filtroFecha)}&$limit=1000&$order={order}"]
+            : predicadosPorLote
+                .Select(predicado =>
+                {
+                    var whereClause = $"{filtroFecha} AND ({predicado})";
+                    var where = Uri.EscapeDataString(whereClause);
+                    return $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$limit=1000&$order={order}";
+                })
+                .ToList();
+
+        var resultadosPorLote = await Task.WhenAll(urls.Select(url => EjecutarConsultaAsync(url, ct)));
+
+        return resultadosPorLote
+            .SelectMany(r => r)
+            .GroupBy(p => p.Id)
+            .Select(g => g.First())
+            .ToList();
+    }
+
+    private static IEnumerable<List<string>> TrocearEnLotes(List<string> items, int tamanoLote)
+    {
+        for (var i = 0; i < items.Count; i += tamanoLote)
+            yield return items.Skip(i).Take(tamanoLote).ToList();
     }
 
     public async Task<List<SecopProcesoDto>> ObtenerDesiertosSinAlertaAsync(CancellationToken ct)
