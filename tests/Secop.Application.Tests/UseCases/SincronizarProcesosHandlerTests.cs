@@ -29,10 +29,11 @@ public class SincronizarProcesosHandlerTests
         List<string>? codigosUnspsc = null,
         List<string>? palabrasClave = null,
         long? chatId = null,
-        float[]? embedding = null)
+        float[]? embedding = null,
+        string nombre = "Test S.A.")
     {
         var p = new Proveedor(
-            nombre: "Test S.A.",
+            nombre: nombre,
             nit: "900100200",
             rupVigencia: DateTime.UtcNow.AddYears(1),
             capacidadFinanciera: 10_000_000m,
@@ -55,8 +56,36 @@ public class SincronizarProcesosHandlerTests
         new(procesoId, proveedorId, 75f, 26f, 20f, 15f, 10f, 4f,
             EtiquetaProceso.Proponer, []);
 
-    private static SecopProcesoDto CrearDto(string id) =>
-        new() { Id = id, Titulo = "T-" + id, NombreEntidad = "Entidad" };
+    private void ConfigurarFuentes(
+        IReadOnlyList<SecopProcesoDto> dtosUnspsc,
+        IReadOnlyList<SecopProcesoDto> dtosGenerales)
+    {
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                It.Is<IEnumerable<string>?>(codigos => codigos != null),
+                It.IsAny<IEnumerable<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(dtosUnspsc.ToList());
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                null, null,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(dtosGenerales.ToList());
+    }
+
+    private void ConfigurarProcesamiento(string procesoId, float[] embedding)
+    {
+        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(embedding);
+        _embedding.Setup(e => e.CalcularSimilitudAsync(embedding, embedding))
+            .ReturnsAsync(0.8f);
+    }
+
+    private static SecopProcesoDto CrearDto(string id) => CrearDtoAbierto(id);
 
     /// <summary>
     /// Crea un DTO que satisface EstaAbiertoParaAplicar() (EstadoApertura/Estado/Fase reales),
@@ -66,7 +95,8 @@ public class SincronizarProcesosHandlerTests
         string id,
         string? modalidad = null,
         string? nombreEntidad = "Entidad",
-        string? objeto = "Objeto") =>
+        string? objeto = "Objeto",
+        string? codigoPrincipalCategoria = "V1.80101500") =>
         new()
         {
             Id = id,
@@ -76,7 +106,8 @@ public class SincronizarProcesosHandlerTests
             Modalidad = modalidad,
             EstadoApertura = "Abierto",
             Estado = "Publicado",
-            Fase = "Presentación de oferta"
+            Fase = "Presentación de oferta",
+            CodigoPrincipalCategoria = codigoPrincipalCategoria
         };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -100,6 +131,12 @@ public class SincronizarProcesosHandlerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([])
             .Verifiable();
+        _secopApi
+            .Setup(c => c.ObtenerProcesosRecientesAsync(
+                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
+                null, null,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
 
         var handler = CrearHandler();
         await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
@@ -143,7 +180,7 @@ public class SincronizarProcesosHandlerTests
         const string procesoId = "PROC-KW-001";
         var embedding = new float[] { 0.1f, 0.2f, 0.3f };
         var proveedor = CrearProveedor(palabrasClave: ["software"], embedding: embedding);
-        var dto = new SecopProcesoDto { Id = procesoId, Titulo = "T-" + procesoId, NombreEntidad = "Entidad", Objeto = "Licencia de software empresarial" };
+        var dto = CrearDtoAbierto(procesoId, objeto: "Licencia de software empresarial");
 
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
@@ -198,7 +235,7 @@ public class SincronizarProcesosHandlerTests
         const string procesoId = "PROC-UNSPSC-001";
         var embedding = new float[] { 0.1f, 0.2f, 0.3f };
         var proveedor = CrearProveedor(palabrasClave: ["software"], embedding: embedding);
-        var dto = new SecopProcesoDto { Id = procesoId, Titulo = "T-" + procesoId, NombreEntidad = "Entidad", Objeto = "Licencia de software empresarial" };
+        var dto = CrearDtoAbierto(procesoId, objeto: "Licencia de software empresarial");
 
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
@@ -268,7 +305,7 @@ public class SincronizarProcesosHandlerTests
         _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(embedding);
         _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
-            .ReturnsAsync(0.4f); // below threshold → no scoring
+            .ReturnsAsync(0.3f); // below threshold → no scoring
 
         var handler = CrearHandler();
         var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
@@ -278,71 +315,66 @@ public class SincronizarProcesosHandlerTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Pre-filter: todosDtos excludes contracts no proveedor would evaluate
+    // Provider-specific matching by UNSPSC or keyword
     // ─────────────────────────────────────────────────────────────────────────
 
-    [Fact]
-    public async Task Handle_AllProveedoresTienenKeywords_UnspscMatchSinKeywordMatch_NotSaved()
+    [Theory]
+    [InlineData("V1.12345678")]
+    [InlineData("V112345678")]
+    [InlineData("12345678")]
+    public async Task Handle_UnspscExactMatchWithoutKeyword_AssignsOnlyMatchingProvider(string categoria)
     {
-        const string procesoId = "PROC-PREFILTER-001";
+        const string procesoId = "PROC-UNSPSC-EXACT";
         var embedding = new float[] { 0.5f };
-        var proveedor = CrearProveedor(
-            codigosUnspsc: ["80111500"],
-            palabrasClave: ["logística"],
-            embedding: embedding);
+        var proveedorCorrecto = CrearProveedor(
+            codigosUnspsc: ["12345678"], palabrasClave: ["logística"],
+            embedding: embedding, nombre: "Proveedor correcto");
+        var otroProveedor = CrearProveedor(
+            codigosUnspsc: ["87654321"], palabrasClave: ["publicidad"],
+            embedding: embedding, nombre: "Otro proveedor");
+        var dto = CrearDtoAbierto(
+            procesoId,
+            objeto: "Suministro de elementos médicos",
+            codigoPrincipalCategoria: categoria);
 
-        var dto = new SecopProcesoDto
-        {
-            Id = procesoId, Titulo = "Médico general", NombreEntidad = "ESE",
-            Objeto = "PRESTACIÓN DE SERVICIOS COMO MÉDICO"
-        };
-
+        ConfigurarFuentes([dto], []);
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([proveedor]);
-        _secopApi
-            .Setup(c => c.ObtenerProcesosRecientesAsync(
-                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
-                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([dto]);
+            .ReturnsAsync([proveedorCorrecto, otroProveedor]);
+        ConfigurarProcesamiento(procesoId, embedding);
+        _scoring.Setup(s => s.CalcularAsync(proveedorCorrecto, It.IsAny<Proceso>(), 0.8f))
+            .ReturnsAsync(CrearPuntaje(procesoId, proveedorCorrecto.Id));
 
         var handler = CrearHandler();
         var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
 
-        result.Should().Be(0);
-        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Never);
+        result.Should().Be(1);
+        _scoring.Verify(s => s.CalcularAsync(proveedorCorrecto, It.IsAny<Proceso>(), 0.8f), Times.Once);
+        _scoring.Verify(s => s.CalcularAsync(otroProveedor, It.IsAny<Proceso>(), It.IsAny<float>()), Times.Never);
     }
 
     [Fact]
-    public async Task Handle_ProveedorSinKeywords_UnspscMatchPasaPrefilter()
+    public async Task Handle_UnspscSixDigitClassMatch_AssignsProvider()
     {
-        const string procesoId = "PROC-PREFILTER-002";
+        const string procesoId = "PROC-UNSPSC-CLASS";
         var embedding = new float[] { 0.5f };
         var proveedor = CrearProveedor(
-            codigosUnspsc: ["80111500"],
-            palabrasClave: null, // sin keywords → acepta todo
+            codigosUnspsc: ["12345678"],
+            palabrasClave: ["logística"],
             embedding: embedding);
+        var dto = CrearDtoAbierto(
+            procesoId,
+            objeto: "Suministro de elementos médicos",
+            codigoPrincipalCategoria: "V1.12345699");
 
-        var dto = new SecopProcesoDto
-        {
-            Id = procesoId, Titulo = "Médico general", NombreEntidad = "ESE",
-            Objeto = "PRESTACIÓN DE SERVICIOS COMO MÉDICO"
-        };
-
+        ConfigurarFuentes([dto], []);
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
-        _secopApi
-            .Setup(c => c.ObtenerProcesosRecientesAsync(
-                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
-                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([dto]);
         _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(embedding);
         _embedding.Setup(e => e.CalcularSimilitudAsync(It.IsAny<float[]>(), It.IsAny<float[]>()))
-            .ReturnsAsync(0.3f); // below threshold → no puntaje, pero sí GuardarAsync proceso
+            .ReturnsAsync(0.3f);
 
         var handler = CrearHandler();
         var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
@@ -351,12 +383,11 @@ public class SincronizarProcesosHandlerTests
         _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Keyword filter applies to UNSPSC results per-proveedor
-    // ─────────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task Handle_UnspscMatch_SkipsProveedor_WhenObjetoNotContainsAnyKeyword()
+    [Theory]
+    [InlineData("V1.85121600")]
+    [InlineData(null)]
+    [InlineData("codigo-invalido")]
+    public async Task Handle_UnspscWithoutProviderCodeOrKeyword_DoesNotAssignProvider(string? categoria)
     {
         const string procesoId = "PROC-MEDICO-001";
         var embedding = new float[] { 0.5f };
@@ -364,39 +395,90 @@ public class SincronizarProcesosHandlerTests
             codigosUnspsc: ["80111500"],
             palabrasClave: ["logística deportiva", "eventos empresariales"],
             embedding: embedding);
+        var dto = CrearDtoAbierto(
+            procesoId,
+            nombreEntidad: "ESE Tangua",
+            objeto: "CONTRATO DE PRESTACIÓN DE SERVICIOS PROFESIONALES COMO MÉDICO GENERAL PARA ROTACIÓN EN EL SERVICIO DE URGENCIAS",
+            codigoPrincipalCategoria: categoria);
 
-        var dto = new SecopProcesoDto
-        {
-            Id = procesoId,
-            Titulo = "Médico general urgencias",
-            NombreEntidad = "ESE Tangua",
-            Objeto = "CONTRATO DE PRESTACIÓN DE SERVICIOS PROFESIONALES COMO MÉDICO GENERAL PARA ROTACIÓN EN EL SERVICIO DE URGENCIAS"
-        };
-
+        ConfigurarFuentes([dto], []);
         _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([proveedor]);
-
-        _secopApi
-            .Setup(c => c.ObtenerProcesosRecientesAsync(
-                It.IsAny<DateTime>(), It.IsAny<DateTime?>(),
-                It.IsAny<IEnumerable<string>?>(), It.IsAny<IEnumerable<string>?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([dto]);
-
-        _procesos.Setup(r => r.ExisteAsync(procesoId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-        _embedding.Setup(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(embedding);
 
         var handler = CrearHandler();
         await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
 
-        // El proceso no pasa el pre-filtro — ningún proveedor lo evaluaría — así que no se guarda nada
         _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Never);
         _puntajes.Verify(r => r.GuardarAsync(It.IsAny<Puntaje>(), It.IsAny<CancellationToken>()), Times.Never);
-        _alertas.Verify(r => r.EnviarAlertaProcesoAsync(
-            It.IsAny<long>(), It.IsAny<Puntaje>(), It.IsAny<Proceso>(),
-            It.IsAny<Proveedor>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Handle_KeywordOnly_AssignsOnlyProviderWithMatchingKeyword()
+    {
+        const string procesoId = "PROC-KEYWORD-PROVIDER";
+        var embedding = new float[] { 0.5f };
+        var proveedorKeyword = CrearProveedor(
+            palabrasClave: ["software"], embedding: embedding, nombre: "Proveedor keyword");
+        var proveedorSinKeywords = CrearProveedor(
+            codigosUnspsc: ["43211500"], palabrasClave: [],
+            embedding: embedding, nombre: "Proveedor sin keywords");
+        var dto = CrearDtoAbierto(
+            procesoId,
+            objeto: "Licenciamiento de software",
+            codigoPrincipalCategoria: "V1.99999999");
+
+        ConfigurarFuentes([], [dto]);
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedorKeyword, proveedorSinKeywords]);
+        ConfigurarProcesamiento(procesoId, embedding);
+        _scoring.Setup(s => s.CalcularAsync(proveedorKeyword, It.IsAny<Proceso>(), 0.8f))
+            .ReturnsAsync(CrearPuntaje(procesoId, proveedorKeyword.Id));
+
+        var handler = CrearHandler();
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        result.Should().Be(1);
+        _scoring.Verify(s => s.CalcularAsync(proveedorKeyword, It.IsAny<Proceso>(), 0.8f), Times.Once);
+        _scoring.Verify(s => s.CalcularAsync(proveedorSinKeywords, It.IsAny<Proceso>(), It.IsAny<float>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Handle_SameProcesoInBothSources_MergesEligibleProvidersAndProcessesOnce()
+    {
+        const string procesoId = "PROC-MERGED-SOURCES";
+        var embedding = new float[] { 0.5f };
+        var proveedorUnspsc = CrearProveedor(
+            codigosUnspsc: ["12345678"], palabrasClave: ["logística"],
+            embedding: embedding, nombre: "Proveedor UNSPSC");
+        var proveedorKeyword = CrearProveedor(
+            codigosUnspsc: ["87654321"], palabrasClave: ["software"],
+            embedding: embedding, nombre: "Proveedor keyword");
+        var dtoUnspsc = CrearDtoAbierto(
+            procesoId,
+            objeto: "Suministro de elementos médicos",
+            codigoPrincipalCategoria: "V1.12345678");
+        var dtoKeyword = CrearDtoAbierto(
+            procesoId,
+            objeto: "Suministro de software",
+            codigoPrincipalCategoria: "V1.12345678");
+
+        ConfigurarFuentes([dtoUnspsc], [dtoKeyword]);
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([proveedorUnspsc, proveedorKeyword]);
+        ConfigurarProcesamiento(procesoId, embedding);
+        _scoring.Setup(s => s.CalcularAsync(proveedorUnspsc, It.IsAny<Proceso>(), 0.8f))
+            .ReturnsAsync(CrearPuntaje(procesoId, proveedorUnspsc.Id));
+        _scoring.Setup(s => s.CalcularAsync(proveedorKeyword, It.IsAny<Proceso>(), 0.8f))
+            .ReturnsAsync(CrearPuntaje(procesoId, proveedorKeyword.Id));
+
+        var handler = CrearHandler();
+        var result = await handler.Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        result.Should().Be(1);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Once);
+        _embedding.Verify(e => e.GenerarEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _scoring.Verify(s => s.CalcularAsync(proveedorUnspsc, It.IsAny<Proceso>(), 0.8f), Times.Once);
+        _scoring.Verify(s => s.CalcularAsync(proveedorKeyword, It.IsAny<Proceso>(), 0.8f), Times.Once);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

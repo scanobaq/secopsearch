@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 using Secop.Domain.Enums;
 
@@ -53,6 +54,9 @@ public class SecopProcesoDto
     [JsonPropertyName("categorias_adicionales")]
     public string? CategoriasAdicionales { get; set; }
 
+    [JsonPropertyName("codigo_principal_de_categoria")]
+    public string? CodigoPrincipalCategoria { get; set; }
+
     [JsonPropertyName("tipo_de_contrato")]
     public string? TipoContrato { get; set; }
 
@@ -102,11 +106,18 @@ public class SecopProcesoDto
         !string.IsNullOrWhiteSpace(Titulo) &&
         !string.IsNullOrWhiteSpace(NombreEntidad);
 
-    public bool EstaAbiertoParaAplicar() =>
-        EsAbierto(EstadoApertura) &&
-        EsPublicado(Estado) &&
-        (EsFaseAplicable(Fase) || EsFaseAplicable(EstadoResumen)) &&
-        FechaRecepcionPermiteAplicar();
+    public bool EstaAbiertoParaAplicar()
+    {
+        if (!EsAbierto(EstadoApertura) || !EsPublicado(Estado))
+            return false;
+
+        if (EsFaseAplicable(Fase) || EsFaseAplicable(EstadoResumen))
+            return FechaRecepcionPermiteAplicar();
+
+        return string.IsNullOrWhiteSpace(Fase) &&
+               EsResumenIndefinido(EstadoResumen) &&
+               FechaRecepcionExplicitaPermiteAplicar();
+    }
 
     public ModalidadContrato ObtenerModalidad() => NormalizarModalidad(Modalidad) switch
     {
@@ -202,6 +213,10 @@ public class SecopProcesoDto
                value.Equals("Fase de ofertas", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool EsResumenIndefinido(string? value) =>
+        string.IsNullOrWhiteSpace(value) ||
+        value.Trim().Equals("No Definido", StringComparison.OrdinalIgnoreCase);
+
     private bool FechaRecepcionPermiteAplicar()
     {
         // Este campo es sparse en SECOP: algunos registros lo traen y otros no.
@@ -211,6 +226,24 @@ public class SecopProcesoDto
             return true;
 
         return fechaRecepcion.Date >= DateTime.UtcNow.Date;
+    }
+
+    private bool FechaRecepcionExplicitaPermiteAplicar()
+    {
+        string[] formatosIso =
+        [
+            "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK",
+            "yyyy-MM-dd'T'HH:mm:ssK"
+        ];
+
+        // SECOP también entrega timestamps sin offset; se interpretan como UTC.
+        return DateTimeOffset.TryParseExact(
+                   FechaCierre,
+                   formatosIso,
+                   CultureInfo.InvariantCulture,
+                   DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                   out var fechaRecepcion) &&
+               fechaRecepcion >= DateTimeOffset.UtcNow;
     }
 }
 

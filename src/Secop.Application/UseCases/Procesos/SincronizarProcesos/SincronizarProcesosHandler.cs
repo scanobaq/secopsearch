@@ -85,10 +85,6 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             "SECOP debug — aplicables UNSPSC tras estado/fase: {AplicablesUnspscCount}",
             dtosUnspscAplicables.Count);
 
-        var idsUnspsc = dtosUnspscAplicables
-            .Select(d => d.Id!)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
         var todasPalabrasClave = todosProveedores
             .SelectMany(p => p.PalabrasClave)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -96,7 +92,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
         var dtosKeywordOnly = todasPalabrasClave.Count > 0
             ? tareaRecientes.Result
-                .Where(d => d.EsValido() && d.EstaAbiertoParaAplicar() && !idsUnspsc.Contains(d.Id!))
+                .Where(d => d.EsValido() && d.EstaAbiertoParaAplicar())
                 .Where(d => !DebeDescartarse(d))
                 .Where(d => ProcesoCoincideConAlgunaPalabraClave(todasPalabrasClave, d.Objeto))
                 .GroupBy(d => d.Id!)
@@ -111,16 +107,31 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
         var candidatosPorProceso = new Dictionary<string, CandidatoProceso>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var dto in dtosUnspscAplicables.Concat(dtosKeywordOnly))
+        var dtosPorFuente = dtosUnspscAplicables
+            .Select(dto => (Dto: dto, EsUnspsc: true))
+            .Concat(dtosKeywordOnly.Select(dto => (Dto: dto, EsUnspsc: false)));
+
+        foreach (var (dto, esUnspsc) in dtosPorFuente)
         {
             foreach (var proveedor in todosProveedores)
             {
                 if (proveedor.Embedding is null) continue;
-                if (!ProcesoCoincideConPalabrasClave(proveedor, dto.Objeto)) continue;
+
+                var coincidePalabraClave = ProcesoCoincideConPalabrasClave(proveedor, dto.Objeto);
+                if (esUnspsc)
+                {
+                    if (!ProcesoCoincideConCodigoUnspsc(proveedor, dto.CodigoPrincipalCategoria) &&
+                        !coincidePalabraClave)
+                        continue;
+                }
+                else if (!coincidePalabraClave)
+                {
+                    continue;
+                }
 
                 if (!candidatosPorProceso.TryGetValue(dto.Id!, out var candidato))
                 {
-                    candidato = new CandidatoProceso(dto, !idsUnspsc.Contains(dto.Id!));
+                    candidato = new CandidatoProceso(dto, !esUnspsc);
                     candidatosPorProceso[dto.Id!] = candidato;
                 }
 
@@ -154,7 +165,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
             foreach (var proveedor in candidato.Proveedores)
             {
-                var similitud = await _embedding.CalcularSimilitudAsync(embeddingVector, proveedor.Embedding);
+                var similitud = await _embedding.CalcularSimilitudAsync(embeddingVector, proveedor.Embedding!);
 
                 _logger.LogInformation(
                     "Similitud entre Proceso {ProcesoId} y Proveedor {ProveedorId}: {Similitud}",
@@ -238,20 +249,52 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
     private static bool ProcesoCoincideConPalabrasClave(Proveedor proveedor, string? objetoProceso)
     {
-        var tienePalabrasClaveValidas = false;
-
         foreach (var palabraClave in proveedor.PalabrasClave)
         {
             if (string.IsNullOrWhiteSpace(palabraClave))
                 continue;
 
-            tienePalabrasClaveValidas = true;
-
             if (ContienePalabraClave(objetoProceso, palabraClave))
                 return true;
         }
 
-        return !tienePalabrasClaveValidas;
+        return false;
+    }
+
+    private static bool ProcesoCoincideConCodigoUnspsc(Proveedor proveedor, string? categoriaPrincipal)
+    {
+        var codigoProceso = NormalizarCodigoUnspsc(categoriaPrincipal);
+        if (codigoProceso is null)
+            return false;
+
+        foreach (var codigoProveedor in proveedor.CodigosUnspsc)
+        {
+            var codigoNormalizado = NormalizarCodigoUnspsc(codigoProveedor);
+            if (codigoNormalizado is null)
+                continue;
+
+            if (codigoNormalizado.Equals(codigoProceso, StringComparison.Ordinal) ||
+                codigoNormalizado.AsSpan(0, 6).SequenceEqual(codigoProceso.AsSpan(0, 6)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string? NormalizarCodigoUnspsc(string? codigo)
+    {
+        if (string.IsNullOrWhiteSpace(codigo))
+            return null;
+
+        var normalizado = codigo.Trim();
+        if (normalizado.StartsWith("V1.", StringComparison.OrdinalIgnoreCase))
+            normalizado = normalizado[3..];
+        else if (normalizado.StartsWith("V1", StringComparison.OrdinalIgnoreCase))
+            normalizado = normalizado[2..];
+
+        return normalizado.Length == 8 && normalizado.All(char.IsDigit)
+            ? normalizado
+            : null;
     }
 
     private static bool ProcesoCoincideConAlgunaPalabraClave(IEnumerable<string> palabrasClave, string? objetoProceso)
