@@ -24,7 +24,15 @@ public class ProcesoMessageFormatterTests
             clasificacion: clasificacion);
 
     private static Puntaje CrearPuntaje() =>
-        new("PROC-001", Guid.NewGuid(), 80f, 30f, 20f, 15f, 10f, 5f, EtiquetaProceso.Proponer, []);
+        new(
+            "PROC-001",
+            Guid.NewGuid(),
+            80f,
+            EstadoElegibilidad.RequiresReview,
+            EstadoAccionabilidad.UnknownDate,
+            RecomendacionAutomatica.Analyze,
+            ["Fecha pendiente de confirmación"],
+            DateTime.UtcNow);
 
     private static Proveedor CrearProveedor() =>
         new("Empresa SAS", "900111222", DateTime.UtcNow.AddYears(1), 1_000_000m, [], []);
@@ -47,5 +55,35 @@ public class ProcesoMessageFormatterTests
 
         mensaje.Should().Contain($"🏷 Modalidad: {nombreEsperado}");
         mensaje.Should().NotContain("Modalidad: Otro");
+    }
+
+    [Fact]
+    public void Formatear_MuestraDimensionesSinPuntajeTotal()
+    {
+        var mensaje = ProcesoMessageFormatter.Formatear(
+            CrearPuntaje(),
+            CrearProceso(ModalidadContrato.LicitacionPublica, ClasificacionRegimen.Ley80),
+            CrearProveedor());
+
+        mensaje.Should().Contain("Relevancia: <b>80,0%</b>");
+        mensaje.Should().Contain("Elegibilidad: <b>Requiere revisión</b>");
+        mensaje.Should().Contain("Accionabilidad: <b>Fecha desconocida</b>");
+        mensaje.Should().Contain("ANALIZAR");
+        mensaje.Should().NotContain("Puntaje:");
+        mensaje.Should().NotContain("PROPONER");
+    }
+
+    [Fact]
+    public void Formatear_AdvierteSobreManifestacionDeInteres_YConservaEnlaceDirecto()
+    {
+        var mensaje = ProcesoMessageFormatter.Formatear(
+            CrearPuntaje(),
+            CrearProceso(ModalidadContrato.LicitacionPublica, ClasificacionRegimen.Ley80),
+            CrearProveedor());
+
+        mensaje.Should().Contain(
+            "⚠️ Antes de preparar o presentar la oferta, verifica en SECOP II si existe un plazo previo para manifestación de interés.");
+        mensaje.Should().Contain(
+            "🔗 <a href=\"https://secop.gov.co\">Ver proceso en SECOP II</a>");
     }
 }

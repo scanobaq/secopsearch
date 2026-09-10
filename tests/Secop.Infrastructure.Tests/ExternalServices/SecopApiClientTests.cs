@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Secop.Infrastructure.ExternalServices;
@@ -19,6 +20,20 @@ public class SecopApiClientTests
     }
 
     private static DateTime Desde => new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    private static string CrearPagina(string prefijo, int cantidad) =>
+        JsonSerializer.Serialize(Enumerable.Range(0, cantidad).Select(i => new
+        {
+            id_del_proceso = $"{prefijo}-{i}"
+        }));
+
+    private static HttpResponseMessage CrearRespuesta(
+        string body,
+        HttpStatusCode statusCode = HttpStatusCode.OK) =>
+        new(statusCode)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
 
     // ─────────────────────────────────────────────────────────────────────────
     // WHERE clause construction
@@ -82,6 +97,89 @@ public class SecopApiClientTests
         query.Should().NotContain("codigo_principal_de_categoria LIKE");
     }
 
+    [Fact]
+    public async Task ObtenerProcesosRecientes_RangoFechaPublicacion_IncluyeDesdeYExcluyeHasta()
+    {
+        var (clientConHasta, urisConHasta) = CrearClienteConCaptura();
+        var hasta = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc);
+
+        await clientConHasta.ObtenerProcesosRecientesAsync(Desde, hasta);
+
+        Uri.UnescapeDataString(urisConHasta.Single().Query).Split('&')[0].Should().Be(
+            "?$where=fecha_de_ultima_publicaci >= '2026-01-01T00:00:00' AND " +
+            "fecha_de_ultima_publicaci < '2026-01-02T00:00:00'");
+
+        var (clientSinHasta, urisSinHasta) = CrearClienteConCaptura();
+
+        await clientSinHasta.ObtenerProcesosRecientesAsync(Desde);
+
+        Uri.UnescapeDataString(urisSinHasta.Single().Query).Split('&')[0].Should().Be(
+            "?$where=fecha_de_ultima_publicaci >= '2026-01-01T00:00:00'");
+    }
+
+    [Fact]
+    public async Task ObtenerProcesosRecientes_ConsultaGeneral_PaginaHastaRespuestaCorta()
+    {
+        var uris = new List<Uri>();
+        var handler = new RoutingHandler(uri =>
+        {
+            var query = Uri.UnescapeDataString(uri.Query);
+            return query.Contains("$offset=0")
+                ? CrearRespuesta(CrearPagina("pagina-1", 1000))
+                : CrearRespuesta(CrearPagina("pagina-2", 2));
+        }, uris);
+        var client = new SecopApiClient(
+            new HttpClient(handler),
+            NullLogger<SecopApiClient>.Instance);
+        var hasta = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc);
+
+        var resultado = await client.ObtenerProcesosRecientesAsync(Desde, hasta);
+
+        resultado.Should().HaveCount(1002);
+        uris.Should().HaveCount(2);
+        var queries = uris.Select(uri => Uri.UnescapeDataString(uri.Query)).ToList();
+        queries.Should().ContainSingle(query => query.Contains("$offset=0"));
+        queries.Should().ContainSingle(query => query.Contains("$offset=1000"));
+        queries.Should().AllSatisfy(query =>
+        {
+            query.Should().Contain("$limit=1000");
+            query.Should().Contain(
+                "fecha_de_ultima_publicaci >= '2026-01-01T00:00:00' AND " +
+                "fecha_de_ultima_publicaci < '2026-01-02T00:00:00'");
+            query.Should().Contain(
+                "$order=fecha_de_ultima_publicaci DESC, id_del_proceso DESC");
+        });
+    }
+
+    [Fact]
+    public async Task ObtenerProcesosRecientes_MultiplesLotes_PaginaCadaLoteIndependientemente()
+    {
+        var uris = new List<Uri>();
+        var handler = new RoutingHandler(uri =>
+        {
+            var query = Uri.UnescapeDataString(uri.Query);
+            var prefijo = query.Contains(" IN(") ? "exactos" : "clases";
+            var cantidad = query.Contains("$offset=0") ? 1000 : 1;
+            return CrearRespuesta(CrearPagina($"{prefijo}-{cantidad}", cantidad));
+        }, uris);
+        var client = new SecopApiClient(
+            new HttpClient(handler),
+            NullLogger<SecopApiClient>.Instance);
+
+        var resultado = await client.ObtenerProcesosRecientesAsync(
+            Desde,
+            codigosUnspsc: ["80101500"],
+            codigosClase: ["431110"]);
+
+        resultado.Should().HaveCount(2002);
+        uris.Should().HaveCount(4);
+        var queries = uris.Select(uri => Uri.UnescapeDataString(uri.Query)).ToList();
+        queries.Should().ContainSingle(query => query.Contains(" IN(") && query.Contains("$offset=0"));
+        queries.Should().ContainSingle(query => query.Contains(" IN(") && query.Contains("$offset=1000"));
+        queries.Should().ContainSingle(query => query.Contains(" LIKE ") && query.Contains("$offset=0"));
+        queries.Should().ContainSingle(query => query.Contains(" LIKE ") && query.Contains("$offset=1000"));
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Bug 414: categorias_adicionales removido (predicado roto, nunca matchea
     // porque el campo real no tiene punto tras "V1"), y troceo en lotes para
@@ -138,6 +236,20 @@ public class SecopApiClientTests
         resultado.Select(p => p.Id).Should().BeEquivalentTo(["P1", "P2", "P3"]);
     }
 
+    [Fact]
+    public async Task ObtenerProcesosRecientes_ErrorSecop_PropagaLaExcepcion()
+    {
+        var handler = new RoutingHandler(
+            _ => CrearRespuesta("{}", HttpStatusCode.BadGateway));
+        var client = new SecopApiClient(
+            new HttpClient(handler),
+            NullLogger<SecopApiClient>.Instance);
+
+        Func<Task> act = () => client.ObtenerProcesosRecientesAsync(Desde);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Inner handler
     // ─────────────────────────────────────────────────────────────────────────
@@ -162,6 +274,33 @@ public class SecopApiClientTests
                 Content = new StringContent(_body, Encoding.UTF8, "application/json")
             };
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class RoutingHandler : HttpMessageHandler
+    {
+        private readonly Func<Uri, HttpResponseMessage> _responseFactory;
+        private readonly List<Uri>? _uris;
+
+        public RoutingHandler(
+            Func<Uri, HttpResponseMessage> responseFactory,
+            List<Uri>? uris = null)
+        {
+            _responseFactory = responseFactory;
+            _uris = uris;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri!;
+            if (_uris is not null)
+            {
+                lock (_uris)
+                    _uris.Add(uri);
+            }
+
+            return Task.FromResult(_responseFactory(uri));
         }
     }
 

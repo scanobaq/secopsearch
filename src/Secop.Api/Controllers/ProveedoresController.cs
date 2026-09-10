@@ -18,7 +18,7 @@ public class ProveedoresController : ControllerBase
 
     public ProveedoresController(IMediator mediator, IProveedorRepository proveedores)
     {
-        _mediator    = mediator;
+        _mediator = mediator;
         _proveedores = proveedores;
     }
 
@@ -27,7 +27,7 @@ public class ProveedoresController : ControllerBase
     /// </summary>
     /// <remarks>
     /// Incluye: vigencia del RUP, días restantes para vencimiento, capacidad financiera,
-    /// códigos UNSPSC y si ya tiene embedding generado (requerido para el scoring).
+    /// códigos UNSPSC y si ya tiene embedding generado (requerido para la evaluación semántica).
     /// Un proveedor sin embedding no participa en la búsqueda semántica de procesos.
     /// </remarks>
     [HttpGet]
@@ -54,11 +54,14 @@ public class ProveedoresController : ControllerBase
     /// </summary>
     /// <remarks>
     /// El embedding es un vector de 1536 dimensiones generado por OpenAI (text-embedding-3-small).
-    /// Se construye concatenando: Nombre del proveedor + todas las descripciones de experiencia.
+    /// Se construye con las descripciones de experiencia y las palabras clave de búsqueda.
+    /// Excluye nombre, capacidad financiera y códigos UNSPSC porque se evalúan por separado.
     /// Este vector se usa para calcular la similitud coseno contra los procesos de SECOP II.
     ///
     /// **Cuándo ejecutar:** una vez al registrar el proveedor y cada vez que se actualice su perfil de experiencia.
-    /// Sin embedding, el proveedor no participa en ningún scoring de procesos.
+    /// También debe ejecutarse para cada proveedor después de cambiar la representación semántica;
+    /// los embeddings existentes no se regeneran automáticamente.
+    /// Sin embedding, el proveedor no participa en la evaluación de procesos.
     /// </remarks>
     /// <param name="id">ID del proveedor.</param>
     [HttpPost("{id}/embedding")]
@@ -69,15 +72,16 @@ public class ProveedoresController : ControllerBase
     }
 
     /// <summary>
-    /// Recalcula los puntajes de todos los procesos activos para un proveedor específico.
+    /// Recalcula las evaluaciones de todos los procesos activos para un proveedor específico.
     /// </summary>
     /// <remarks>
     /// Útil cuando:
     /// - Se actualiza el perfil o embedding del proveedor.
-    /// - Se cambian los pesos del scoring.
+    /// - Se cambia la política de evaluación.
     /// - Se quiere forzar un recálculo sin esperar al worker.
     ///
-    /// El proceso: obtiene todos los procesos activos en BD → calcula similitud coseno → si ≥ 0.65, calcula puntaje completo y persiste.
+    /// El proceso obtiene procesos activos, calcula similitud coseno y, si es ≥ 0.40,
+    /// persiste relevancia, elegibilidad, accionabilidad y razones.
     /// </remarks>
     /// <param name="id">ID del proveedor a recalcular.</param>
     [HttpPost("{id}/recalcular")]

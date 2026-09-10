@@ -12,6 +12,7 @@ public class SecopApiClient : ISecopApiClient
 
     private const string DatasetProcesos = "p6dx-8zbt";
     private const string BaseUrl = "https://www.datos.gov.co/resource";
+    private const int TamanoPagina = 1000;
 
     // Límite de códigos UNSPSC por consulta HTTP. Con muchos códigos combinados en un
     // único $where la URL puede superar los ~8KB que soportan los front-ends nginx de
@@ -36,8 +37,8 @@ public class SecopApiClient : ISecopApiClient
         var fechaDesde = desde.ToString("yyyy-MM-ddTHH:mm:ss");
 
         var filtroFecha = hasta.HasValue
-            ? $"fecha_de_ultima_publicaci > '{fechaDesde}' AND fecha_de_ultima_publicaci <= '{hasta.Value:yyyy-MM-ddTHH:mm:ss}'"
-            : $"fecha_de_ultima_publicaci > '{fechaDesde}'";
+            ? $"fecha_de_ultima_publicaci >= '{fechaDesde}' AND fecha_de_ultima_publicaci < '{hasta.Value:yyyy-MM-ddTHH:mm:ss}'"
+            : $"fecha_de_ultima_publicaci >= '{fechaDesde}'";
 
         var exactos = codigosUnspsc?.Distinct().ToList() ?? [];
         var clases = codigosClase?.Distinct().ToList() ?? [];
@@ -52,20 +53,20 @@ public class SecopApiClient : ISecopApiClient
                 .Select(lote => string.Join(" OR ", lote.Select(c => $"codigo_principal_de_categoria LIKE 'V1.{c}%'"))))
             .ToList();
 
-        var order = Uri.EscapeDataString("fecha_de_ultima_publicaci DESC");
+        var order = Uri.EscapeDataString("fecha_de_ultima_publicaci DESC, id_del_proceso DESC");
 
         var urls = predicadosPorLote.Count == 0
-            ? [$"{BaseUrl}/{DatasetProcesos}.json?$where={Uri.EscapeDataString(filtroFecha)}&$limit=1000&$order={order}"]
+            ? [$"{BaseUrl}/{DatasetProcesos}.json?$where={Uri.EscapeDataString(filtroFecha)}&$order={order}"]
             : predicadosPorLote
                 .Select(predicado =>
                 {
                     var whereClause = $"{filtroFecha} AND ({predicado})";
                     var where = Uri.EscapeDataString(whereClause);
-                    return $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$limit=1000&$order={order}";
+                    return $"{BaseUrl}/{DatasetProcesos}.json?$where={where}&$order={order}";
                 })
                 .ToList();
 
-        var resultadosPorLote = await Task.WhenAll(urls.Select(url => EjecutarConsultaAsync(url, ct)));
+        var resultadosPorLote = await Task.WhenAll(urls.Select(url => EjecutarConsultaPaginadaAsync(url, ct)));
 
         return resultadosPorLote
             .SelectMany(r => r)
@@ -78,6 +79,21 @@ public class SecopApiClient : ISecopApiClient
     {
         for (var i = 0; i < items.Count; i += tamanoLote)
             yield return items.Skip(i).Take(tamanoLote).ToList();
+    }
+
+    private async Task<List<SecopProcesoDto>> EjecutarConsultaPaginadaAsync(string urlBase, CancellationToken ct)
+    {
+        var resultados = new List<SecopProcesoDto>();
+
+        for (var offset = 0; ; offset += TamanoPagina)
+        {
+            var url = $"{urlBase}&$limit={TamanoPagina}&$offset={offset}";
+            var pagina = await EjecutarConsultaAsync(url, ct);
+            resultados.AddRange(pagina);
+
+            if (pagina.Count < TamanoPagina)
+                return resultados;
+        }
     }
 
     public async Task<List<SecopProcesoDto>> ObtenerDesiertosSinAlertaAsync(CancellationToken ct)
@@ -103,12 +119,16 @@ public class SecopApiClient : ISecopApiClient
         {
             var json = await _http.GetStringAsync(url, ct);
             var result = JsonSerializer.Deserialize<List<SecopProcesoDto>>(json);
-            return result ?? [];
+            return result ?? throw new JsonException("SECOP II returned an invalid null response.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error consultando SECOP II: {Url}", url);
-            return [];
+            _logger.LogError(ex, "Error consultando el dataset SECOP II {Dataset}", DatasetProcesos);
+            throw;
         }
     }
 

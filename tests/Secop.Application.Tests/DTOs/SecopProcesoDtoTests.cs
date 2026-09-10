@@ -258,6 +258,67 @@ public class SecopProcesoDtoTests
         dto!.CodigoPrincipalCategoria.Should().Be("V1.12345678");
     }
 
+    [Theory]
+    [InlineData("  60000000  ", 60_000_000)]
+    [InlineData("60000000.50", 60_000_000.50)]
+    [InlineData("00060000000.00", 60_000_000)]
+    public void TryObtenerPresupuestoCop_FormasAsciiPositivas_DevuelveValor(string presupuesto, decimal esperado)
+    {
+        var dto = new SecopProcesoDto { Presupuesto = presupuesto };
+
+        dto.TryObtenerPresupuestoCop(out var resultado).Should().BeTrue();
+        resultado.Should().Be(esperado);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("0")]
+    [InlineData("0.00")]
+    [InlineData("-60000000")]
+    [InlineData("+60000000")]
+    [InlineData(".50")]
+    [InlineData("50.")]
+    [InlineData("1.2.3")]
+    [InlineData("60.000.000")]
+    [InlineData("60,000,000")]
+    [InlineData("60000000,50")]
+    [InlineData("$60000000")]
+    [InlineData("6e7")]
+    [InlineData("60 000000")]
+    [InlineData("٦٠٠٠٠٠٠٠")]
+    [InlineData("79228162514264337593543950336")]
+    [InlineData("1.00000000000000000000000000001")]
+    public void TryObtenerPresupuestoCop_FormasNoUsables_Rechaza(string? presupuesto)
+    {
+        var dto = new SecopProcesoDto { Presupuesto = presupuesto };
+
+        dto.TryObtenerPresupuestoCop(out var resultado).Should().BeFalse();
+        resultado.Should().Be(0m);
+    }
+
+    [Theory]
+    [InlineData("en-US")]
+    [InlineData("es-CO")]
+    [InlineData("fr-FR")]
+    public void TryObtenerPresupuestoCop_IndependienteDeCulturaActual(string nombreCultura)
+    {
+        var culturaOriginal = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(nombreCultura);
+            var dto = new SecopProcesoDto { Presupuesto = "60000000.50" };
+
+            dto.TryObtenerPresupuestoCop(out var resultado).Should().BeTrue();
+            resultado.Should().Be(60_000_000.50m);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = culturaOriginal;
+        }
+    }
+
     private static SecopProcesoDto CrearDtoParaFallback() => new()
     {
         EstadoApertura = "Abierto",

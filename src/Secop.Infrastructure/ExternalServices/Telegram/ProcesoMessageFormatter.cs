@@ -7,23 +7,21 @@ public static class ProcesoMessageFormatter
 {
     public static string Formatear(Puntaje puntaje, Proceso proceso, Proveedor proveedor)
     {
-        var emoji = puntaje.Etiqueta switch
-        {
-            EtiquetaProceso.Proponer  => "🟢 PROPONER",
-            EtiquetaProceso.Analizar  => "🟡 ANALIZAR",
-            EtiquetaProceso.Descartar => "🔴 DESCARTAR",
-            _ => "⚪"
-        };
-
         var presupuesto = proceso.Presupuesto.ToString("C0");
+        var relevancia = puntaje.RelevanciaPorcentaje.ToString(
+            "F1",
+            System.Globalization.CultureInfo.GetCultureInfo("es-CO"));
         var cierreTexto = FormatearCierre(proceso);
-
-        var advertencias = puntaje.Advertencias.Count > 0
-            ? "\n⚠️ " + string.Join("\n⚠️ ", puntaje.Advertencias)
+        var razones = puntaje.Razones.Count > 0
+            ? "\n⚠️ " + string.Join("\n⚠️ ", puntaje.Razones.Select(EscapeHtml))
             : string.Empty;
 
         return $"""
-            <b>{emoji} — Puntaje: {puntaje.PuntajeTotal:F0}/100</b>
+            <b>🟡 ANALIZAR</b>
+
+            🎯 Relevancia: <b>{relevancia}%</b>
+            ✅ Elegibilidad: <b>{NombreElegibilidad(puntaje.Elegibilidad)}</b>
+            ⏱ Accionabilidad: <b>{NombreAccionabilidad(puntaje.Accionabilidad)}</b>
 
             📋 {EscapeHtml(proceso.Titulo)}
 
@@ -32,7 +30,8 @@ public static class ProcesoMessageFormatter
             📅 Cierre: {cierreTexto}
             🏷 Modalidad: {NombreModalidad(proceso)}
             🏢 Empresa recomendada: <b>{EscapeHtml(proveedor.Nombre)}</b>
-            {advertencias}
+            {razones}
+            ⚠️ Antes de preparar o presentar la oferta, verifica en SECOP II si existe un plazo previo para manifestación de interés.
             🔗 <a href="{proceso.UrlProceso}">Ver proceso en SECOP II</a>
             """;
     }
@@ -59,6 +58,23 @@ public static class ProcesoMessageFormatter
     private static string EscapeHtml(string text) =>
         text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
+    private static string NombreElegibilidad(EstadoElegibilidad elegibilidad) => elegibilidad switch
+    {
+        EstadoElegibilidad.Eligible => "Elegible",
+        EstadoElegibilidad.RequiresReview => "Requiere revisión",
+        EstadoElegibilidad.Ineligible => "No elegible",
+        _ => elegibilidad.ToString()
+    };
+
+    private static string NombreAccionabilidad(EstadoAccionabilidad accionabilidad) => accionabilidad switch
+    {
+        EstadoAccionabilidad.Actionable => "Accionable",
+        EstadoAccionabilidad.Urgent => "Urgente",
+        EstadoAccionabilidad.InsufficientTime => "Tiempo insuficiente",
+        EstadoAccionabilidad.UnknownDate => "Fecha desconocida",
+        _ => accionabilidad.ToString()
+    };
+
     private static string FormatearCierre(Proceso proceso)
     {
         // El dataset SECOP p6dx-8zbt no siempre expone fecha real de cierre.
@@ -66,10 +82,7 @@ public static class ProcesoMessageFormatter
         if (proceso.FechaCierre <= DateTime.UnixEpoch)
             return "No disponible en SECOP";
 
-        var dias = proceso.DiasHabilesRestantes();
-        var diasTexto = dias == 0 ? "Vencido" : $"{dias} días hábiles";
         var cierre = proceso.FechaCierre.ToString("dd 'de' MMMM", new System.Globalization.CultureInfo("es-CO"));
-
-        return $"{cierre} ({diasTexto})";
+        return cierre;
     }
 }

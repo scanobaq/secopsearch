@@ -7,124 +7,99 @@ using Secop.Domain.Enums;
 namespace Secop.Infrastructure.Scoring;
 
 /// <summary>
-/// Calcula el puntaje de compatibilidad (0–100) entre un proveedor y un proceso SECOP II.
-///
-/// Componentes:
-///   Similitud semántica   35 pts  (embedding coseno)
-///   Requisitos           25 pts  (RUP vigente + capacidad financiera)
-///   Tiempo disponible    20 pts  (días hábiles al cierre)
-///   Competencia estimada 12 pts  (simplificado v1: desierto vs activo)
-///   Historial entidad     8 pts  (simplificado v1: valor neutro)
-///
-/// Regla inhabilitante: RUP vencido → puntaje = 0, etiqueta = Descartar.
+/// Conserva el nombre histórico del servicio, pero produce una evaluación dimensional.
 /// </summary>
-public class ScoringService(ILogger<ScoringService> logger) : IScoringService
+public class ScoringService(TimeProvider timeProvider, ILogger<ScoringService> logger) : IScoringService
 {
     public Task<Puntaje> CalcularAsync(Proveedor proveedor, Proceso proceso, float similitud)
     {
-        var advertencias = new List<string>();
-
-        // Inhabilitante automático: solo ESAL (Decreto 092 de 2017) — mismo mecanismo que RUP vencido
-        if (proceso.EsSoloEsal())
-        {
-            advertencias.Add(AdvertenciasPuntaje.SoloEsal);
-            return Task.FromResult(Puntaje.Inhabilitado(proceso.Id, proveedor.Id, advertencias));
-        }
-
-        // Inhabilitante automático: RUP vencido
-        // if (!proveedor.RupVigente())
-        // {
-        //     advertencias.Add(AdvertenciasPuntaje.RupVencido);
-        //     return Task.FromResult(Puntaje.Inhabilitado(proceso.Id, proveedor.Id, advertencias));
-        // }
-
-        // Componente 1: Similitud semántica (35 pts)
-        float pSimilitud = similitud * 35f;
-
-        // Componente 2: Requisitos habilitantes (25 pts)
-        float pRequisitos = 15f; // RUP vigente ya verificado arriba
-        if (proveedor.CubreCapacidadFinanciera(proceso.Presupuesto))
-            pRequisitos += 10f;
-
-        // Componente 3: Tiempo disponible (20 pts)
-        // int dias = proceso.DiasHabilesRestantes();
-        // float pTiempo = dias switch
-        // {
-        //     >= 15 => 20f,
-        //     >= 10 => 15f,
-        //     >= 5 => 8f,
-        //     _ => 2f
-        // };
-
-        // Señal de proceso dirigido
-        // if (dias <= 3)
-        //     advertencias.Add(AdvertenciasPuntaje.PlazoMuyCorto);
-
-        // Componente 4: Competencia estimada (12 pts) — normalizada por contadores reales (SPEC-06)
-        float pCompetencia = CalcularCompetencia(proceso);
-
-        // Componente 5: Historial de la entidad (8 pts) — v1 simplificado
-        // Valor neutro hasta tener historial real de adjudicaciones
-        //float pEntidad = 4f;
-
-        //float total = pSimilitud + pRequisitos + pTiempo + pCompetencia + pEntidad;
-        float total = pSimilitud + pRequisitos + 0 + pCompetencia + 0;
-        total = Math.Min(total, 100f); // Cap defensivo
+        var ahora = timeProvider.GetUtcNow();
+        var razones = new List<string>();
+        var elegibilidad = EvaluarElegibilidad(proveedor, proceso, razones);
+        var accionabilidad = EvaluarAccionabilidad(proceso.FechaCierre, ahora, razones);
+        var relevancia = Math.Clamp(similitud * 100f, 0f, 100f);
+        var recomendacion = elegibilidad != EstadoElegibilidad.Ineligible &&
+                            accionabilidad != EstadoAccionabilidad.InsufficientTime
+            ? RecomendacionAutomatica.Analyze
+            : (RecomendacionAutomatica?)null;
 
         logger.LogInformation(
-            "Puntaje calculado para Proceso {ProcesoId} y Proveedor {ProveedorId}: Total={Total}, Similitud={Similitud}, Requisitos={Requisitos}, Competencia={Competencia}",
-            proceso.Id, proveedor.Id, total, pSimilitud, pRequisitos, pCompetencia);
-
-        var etiqueta = total switch
-        {
-            >= 70 => EtiquetaProceso.Proponer,
-            >= 40 => EtiquetaProceso.Analizar,
-            _ => EtiquetaProceso.Descartar
-        };
+            "Evaluación calculada para Proceso {ProcesoId} y Proveedor {ProveedorId}: Relevancia={Relevancia}, Elegibilidad={Elegibilidad}, Accionabilidad={Accionabilidad}, Recomendación={Recomendacion}",
+            proceso.Id, proveedor.Id, relevancia, elegibilidad, accionabilidad, recomendacion);
 
         return Task.FromResult(new Puntaje(
-            procesoId: proceso.Id,
-            proveedorId: proveedor.Id,
-            puntajeTotal: total,
-            puntajeSimilitud: pSimilitud,
-            puntajeRequisitos: pRequisitos,
-            puntajeTiempo: 0,//pTiempo,
-            puntajeCompetencia: pCompetencia,
-            puntajeEntidad: 0,//pEntidad,
-            etiqueta: etiqueta,
-            advertencias: advertencias));
+            proceso.Id,
+            proveedor.Id,
+            relevancia,
+            elegibilidad,
+            accionabilidad,
+            recomendacion,
+            razones,
+            ahora.UtcDateTime));
     }
 
-    /// <summary>
-    /// Normaliza la competencia estimada (0–12 pts) a partir de los contadores reales
-    /// del proceso. Menos competidores → puntaje más alto (menos competencia para el proveedor).
-    /// Si no hay ningún contador disponible (proceso aún no cerró), retorna un valor neutro.
-    /// </summary>
-    private static float CalcularCompetencia(Proceso proceso)
+    private static EstadoElegibilidad EvaluarElegibilidad(
+        Proveedor proveedor,
+        Proceso proceso,
+        List<string> razones)
     {
-        if (proceso.ProveedoresInvitados is null &&
-            proceso.ProveedoresQueManifestaron is null &&
-            proceso.RespuestasAlProcedimiento is null &&
-            proceso.ConteoRespuestasOfertas is null &&
-            proceso.ProveedoresUnicosCon is null)
+        // Política temporal de experimentación: se asume RUP vigente; DEBE restaurarse y validarse antes de producción.
+        if (proceso.EsSoloEsal())
+            razones.Add(RazonesEvaluacion.SoloEsal);
+
+        if (razones.Count > 0)
+            return EstadoElegibilidad.Ineligible;
+
+        if (!proveedor.CubreCapacidadFinanciera(proceso.Presupuesto))
         {
-            return 6f; // Neutral — sin señal aún
+            razones.Add(RazonesEvaluacion.CapacidadInsuficiente);
+            return EstadoElegibilidad.RequiresReview;
         }
 
-        int competidores = proceso.ProveedoresUnicosCon
-            ?? proceso.ConteoRespuestasOfertas
-            ?? proceso.RespuestasAlProcedimiento
-            ?? proceso.ProveedoresQueManifestaron
-            ?? proceso.ProveedoresInvitados
-            ?? 0;
+        razones.Add(RazonesEvaluacion.Elegible);
+        return EstadoElegibilidad.Eligible;
+    }
 
-        return competidores switch
+    private static EstadoAccionabilidad EvaluarAccionabilidad(
+        DateTime fechaCierre,
+        DateTimeOffset ahora,
+        List<string> razones)
+    {
+        if (fechaCierre <= DateTime.UnixEpoch || fechaCierre == DateTime.MaxValue)
         {
-            0 => 12f,
-            1 => 10f,
-            <= 3 => 8f,
-            <= 6 => 5f,
-            _ => 2f
-        };
+            razones.Add(RazonesEvaluacion.FechaCierreDesconocida);
+            return EstadoAccionabilidad.UnknownDate;
+        }
+
+        var cierreUtc = fechaCierre.Kind == DateTimeKind.Local
+            ? fechaCierre.ToUniversalTime()
+            : DateTime.SpecifyKind(fechaCierre, DateTimeKind.Utc);
+        if (cierreUtc <= ahora.UtcDateTime)
+        {
+            razones.Add(RazonesEvaluacion.PlazoVencido);
+            return EstadoAccionabilidad.InsufficientTime;
+        }
+
+        var diasHabiles = ContarDiasHabiles(ahora.UtcDateTime.Date, cierreUtc.Date);
+        if (diasHabiles <= 5)
+        {
+            razones.Add(RazonesEvaluacion.PlazoUrgente(diasHabiles));
+            return EstadoAccionabilidad.Urgent;
+        }
+
+        razones.Add(RazonesEvaluacion.PlazoAccionable(diasHabiles));
+        return EstadoAccionabilidad.Actionable;
+    }
+
+    private static int ContarDiasHabiles(DateTime desde, DateTime hasta)
+    {
+        var dias = 0;
+        for (var fecha = desde.AddDays(1); fecha <= hasta; fecha = fecha.AddDays(1))
+        {
+            if (fecha.DayOfWeek is not DayOfWeek.Saturday and not DayOfWeek.Sunday)
+                dias++;
+        }
+
+        return dias;
     }
 }

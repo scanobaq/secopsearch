@@ -1,12 +1,12 @@
-using System.Text.RegularExpressions;
+using System.Globalization;
 using MediatR;
 using Microsoft.Extensions.Logging;
 using Secop.Application.Interfaces;
+using Secop.Application.Services;
 using Secop.Domain.Constants;
 using Secop.Domain.Entities;
 using Secop.Domain.Enums;
 using Secop.Domain.Services;
-using Secop.Domain.ValueObjects;
 
 namespace Secop.Application.UseCases.Procesos.SincronizarProcesos;
 
@@ -20,9 +20,6 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
     private readonly IScoringService _scoring;
     private readonly IAlertaService _alertas;
     private readonly ILogger<SincronizarProcesosHandler> _logger;
-
-    private const float UmbralSimilitudMinima = 0.40f;
-    private const float UmbralAlertaProponer = 40f;
 
     public SincronizarProcesosHandler(
         ISecopApiClient secopApi,
@@ -46,156 +43,106 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
 
     public async Task<int> Handle(SincronizarProcesosCommand request, CancellationToken ct)
     {
-        var todosProveedores = (await _proveedores.ObtenerTodosAsync(ct)).ToList();
-
-        var codigosExactos = todosProveedores
-            .SelectMany(p => p.CodigosUnspsc)
-            .Distinct()
+        var proveedoresConEmbedding = (await _proveedores.ObtenerTodosAsync(ct))
+            .Where(proveedor => proveedor.Embedding is not null)
+            .ToList();
+        var procesosRecientes = await _secopApi.ObtenerProcesosRecientesAsync(
+            request.Desde,
+            request.Hasta,
+            ct: ct);
+        var procesosAplicables = procesosRecientes
+            .Where(dto => dto.EsValido())
+            .Where(dto => dto.EstaAbiertoParaAplicar())
+            .Where(dto => !DebeDescartarse(dto))
+            .GroupBy(dto => dto.Id!, StringComparer.OrdinalIgnoreCase)
+            .Select(grupo => grupo.First())
             .ToList();
 
-        var codigosClase = codigosExactos
-            .Select(c => new CodigoUnspsc(c).CodigoClase)
-            .Distinct()
-            .ToList();
+        var evaluados = 0;
+        var rechazadosPorSimilitud = 0;
+        var nuevos = 0;
+        var puntajesGuardados = 0;
+        var intentosAlerta = 0;
+        var maximumSimilaritiesByProcess = new List<string>();
 
-        var tareaUnspsc = _secopApi.ObtenerProcesosRecientesAsync(request.Desde, request.Hasta, codigosExactos, codigosClase, ct);
-        var tareaRecientes = _secopApi.ObtenerProcesosRecientesAsync(request.Desde, request.Hasta, ct: ct);
-
-        await Task.WhenAll(tareaUnspsc, tareaRecientes);
-
-        _logger.LogInformation(
-            "SECOP debug — crudos UNSPSC: {UnspscCount}, crudos recientes: {RecientesCount}",
-            tareaUnspsc.Result.Count,
-            tareaRecientes.Result.Count);
-
-        var dtosUnspscValidos = tareaUnspsc.Result
-            .Where(d => d.EsValido())
-            .ToList();
-
-        _logger.LogInformation(
-            "SECOP debug — válidos UNSPSC tras EsValido(): {ValidosUnspscCount}",
-            dtosUnspscValidos.Count);
-
-        var dtosUnspscAplicables = dtosUnspscValidos
-            .Where(d => d.EstaAbiertoParaAplicar())
-            .Where(d => !DebeDescartarse(d))
-            .ToList();
-
-        _logger.LogInformation(
-            "SECOP debug — aplicables UNSPSC tras estado/fase: {AplicablesUnspscCount}",
-            dtosUnspscAplicables.Count);
-
-        var todasPalabrasClave = todosProveedores
-            .SelectMany(p => p.PalabrasClave)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var dtosKeywordOnly = todasPalabrasClave.Count > 0
-            ? tareaRecientes.Result
-                .Where(d => d.EsValido() && d.EstaAbiertoParaAplicar())
-                .Where(d => !DebeDescartarse(d))
-                .Where(d => ProcesoCoincideConAlgunaPalabraClave(todasPalabrasClave, d.Objeto))
-                .GroupBy(d => d.Id!)
-                .Select(g => g.First())
-                .ToList()
-            : [];
-
-        _logger.LogInformation(
-            "SECOP debug — palabras clave globales: {KeywordsCount}, candidatos keyword-only: {KeywordOnlyCount}",
-            todasPalabrasClave.Count,
-            dtosKeywordOnly.Count);
-
-        var candidatosPorProceso = new Dictionary<string, CandidatoProceso>(StringComparer.OrdinalIgnoreCase);
-
-        var dtosPorFuente = dtosUnspscAplicables
-            .Select(dto => (Dto: dto, EsUnspsc: true))
-            .Concat(dtosKeywordOnly.Select(dto => (Dto: dto, EsUnspsc: false)));
-
-        foreach (var (dto, esUnspsc) in dtosPorFuente)
+        foreach (var dto in procesosAplicables)
         {
-            foreach (var proveedor in todosProveedores)
-            {
-                if (proveedor.Embedding is null) continue;
-
-                var coincidePalabraClave = ProcesoCoincideConPalabrasClave(proveedor, dto.Objeto);
-                if (esUnspsc)
-                {
-                    if (!ProcesoCoincideConCodigoUnspsc(proveedor, dto.CodigoPrincipalCategoria) &&
-                        !coincidePalabraClave)
-                        continue;
-                }
-                else if (!coincidePalabraClave)
-                {
-                    continue;
-                }
-
-                if (!candidatosPorProceso.TryGetValue(dto.Id!, out var candidato))
-                {
-                    candidato = new CandidatoProceso(dto, !esUnspsc);
-                    candidatosPorProceso[dto.Id!] = candidato;
-                }
-
-                candidato.Proveedores.Add(proveedor);
-            }
-        }
-
-        var candidatos = candidatosPorProceso.Values.ToList();
-
-        _logger.LogInformation(
-            "SECOP debug — candidatos únicos por proveedor antes de embeddings: {Count}",
-            candidatos.Count);
-
-        int nuevos = 0;
-
-        foreach (var candidato in candidatos)
-        {
-            var dto = candidato.Dto;
-
             if (await _procesos.ExisteAsync(dto.Id!, ct))
                 continue;
 
-            var proceso = MapearProceso(dto);
+            var modalidad = dto.ObtenerModalidad();
+            decimal? presupuestoCop = dto.TryObtenerPresupuestoCop(out var presupuesto) ? presupuesto : null;
+            if (!ElegibilidadProceso.EsElegible(modalidad, presupuestoCop))
+                continue;
 
-            var textoEmbedding = $"{proceso.Titulo} {proceso.Objeto}";
+            evaluados++;
+            var proceso = MapearProceso(dto, presupuesto, modalidad);
+            var textoEmbedding = ConstructorTextoSemantico.CrearParaProceso(proceso);
             var embeddingVector = await _embedding.GenerarEmbeddingAsync(textoEmbedding, ct);
             proceso.AsignarEmbedding(embeddingVector);
+
+            var proveedoresCalificados = new List<(Proveedor Proveedor, float Similitud)>();
+            float? maximumSimilarity = null;
+            foreach (var proveedor in proveedoresConEmbedding)
+            {
+                var similitud = await _embedding.CalcularSimilitudAsync(embeddingVector, proveedor.Embedding!);
+                if (!maximumSimilarity.HasValue || similitud > maximumSimilarity.Value)
+                    maximumSimilarity = similitud;
+
+                if (similitud >= PoliticaEvaluacion.UmbralSimilitud)
+                    proveedoresCalificados.Add((proveedor, similitud));
+            }
+
+            var maximumSimilarityText = maximumSimilarity.HasValue
+                ? maximumSimilarity.Value.ToString("F4", CultureInfo.InvariantCulture)
+                : "N/A";
+            maximumSimilaritiesByProcess.Add(
+                $"{NormalizeIdForLog(dto.Id!)}={maximumSimilarityText}");
+
+            if (proveedoresCalificados.Count == 0)
+            {
+                rechazadosPorSimilitud++;
+                continue;
+            }
 
             await _procesos.GuardarAsync(proceso, ct);
             nuevos++;
 
-            foreach (var proveedor in candidato.Proveedores)
+            foreach (var (proveedor, similitud) in proveedoresCalificados)
             {
-                var similitud = await _embedding.CalcularSimilitudAsync(embeddingVector, proveedor.Embedding!);
-
-                _logger.LogInformation(
-                    "Similitud entre Proceso {ProcesoId} y Proveedor {ProveedorId}: {Similitud}",
-                    proceso.Id, proveedor.Id, similitud);
-
-                if (similitud < UmbralSimilitudMinima) continue;
-
                 var puntaje = await _scoring.CalcularAsync(proveedor, proceso, similitud);
-
-                if (candidato.EsKeywordOnly)
-                    puntaje.AgregarAdvertencia(AdvertenciasPuntaje.EncontradoPorTexto);
-
                 if (DetectorRegimenEspecial.EsPosibleRegimenEspecial(proceso.NombreEntidad))
-                    puntaje.AgregarAdvertencia(AdvertenciasPuntaje.PosibleRegimenEspecial);
+                    puntaje.AgregarRazon(RazonesEvaluacion.PosibleRegimenEspecial);
 
                 await _puntajes.GuardarAsync(puntaje, ct);
+                puntajesGuardados++;
 
-                if (puntaje.PuntajeTotal >= UmbralAlertaProponer && proveedor.TelegramChatId.HasValue)
+                if (puntaje.EsAlertable && proveedor.TelegramChatId.HasValue)
                 {
+                    intentosAlerta++;
                     await _alertas.EnviarAlertaProcesoAsync(
                         proveedor.TelegramChatId.Value, puntaje, proceso, proveedor, ct);
                 }
             }
-
-            _logger.LogInformation("Proceso ingresado: {Id} | {Titulo}", proceso.Id, proceso.Titulo);
         }
 
-        _logger.LogInformation("Sincronización completada. Procesos nuevos: {Nuevos}", nuevos);
+        var similaritySummary = maximumSimilaritiesByProcess.Count == 0
+            ? "ninguna"
+            : string.Join(", ", maximumSimilaritiesByProcess);
+        _logger.LogInformation(
+            "Sincronización completada. Elegibles evaluados: {Evaluados}; rechazados sin proveedor sobre {Umbral:0.00}: {Rechazados}; procesos persistidos: {Persistidos}; puntajes guardados: {Puntajes}; intentos de alerta: {Alertas}; similitudes máximas por proceso: {MaxSimilaritiesByProcess}",
+            evaluados,
+            PoliticaEvaluacion.UmbralSimilitud,
+            rechazadosPorSimilitud,
+            nuevos,
+            puntajesGuardados,
+            intentosAlerta,
+            similaritySummary);
         return nuevos;
     }
+
+    private static string NormalizeIdForLog(string id) =>
+        id.Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ');
 
     /// <summary>
     /// Descarta siempre los procesos de Régimen Especial y de RFI (decisión de negocio):
@@ -204,9 +151,11 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
     private static bool DebeDescartarse(global::Secop.Application.DTOs.SecopProcesoDto dto) =>
         dto.ObtenerClasificacion() is ClasificacionRegimen.RegimenEspecial or ClasificacionRegimen.Rfi;
 
-    private static Proceso MapearProceso(global::Secop.Application.DTOs.SecopProcesoDto dto)
+    private static Proceso MapearProceso(
+        global::Secop.Application.DTOs.SecopProcesoDto dto,
+        decimal presupuesto,
+        ModalidadContrato modalidad)
     {
-        _ = decimal.TryParse(dto.Presupuesto, out var presupuesto);
         _ = DateTime.TryParse(dto.FechaCierre, out var fechaCierre);
         _ = DateTime.TryParse(dto.FechaUltimaPublicacion, out var fechaPublicacion);
         fechaCierre = DateTime.SpecifyKind(fechaCierre, DateTimeKind.Utc);
@@ -224,7 +173,7 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             presupuesto: presupuesto,
             fechaCierre: fechaCierre,
             fechaPublicacion: fechaPublicacion,
-            modalidad: dto.ObtenerModalidad(),
+            modalidad: modalidad,
             estado: dto.ObtenerEstado(),
             nombreEntidad: dto.NombreEntidad ?? string.Empty,
             nitEntidad: dto.NitEntidad ?? string.Empty,
@@ -247,98 +196,4 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
     private static int? ParsearEntero(string? valor) =>
         int.TryParse(valor, out var resultado) ? resultado : null;
 
-    private static bool ProcesoCoincideConPalabrasClave(Proveedor proveedor, string? objetoProceso)
-    {
-        foreach (var palabraClave in proveedor.PalabrasClave)
-        {
-            if (string.IsNullOrWhiteSpace(palabraClave))
-                continue;
-
-            if (ContienePalabraClave(objetoProceso, palabraClave))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool ProcesoCoincideConCodigoUnspsc(Proveedor proveedor, string? categoriaPrincipal)
-    {
-        var codigoProceso = NormalizarCodigoUnspsc(categoriaPrincipal);
-        if (codigoProceso is null)
-            return false;
-
-        foreach (var codigoProveedor in proveedor.CodigosUnspsc)
-        {
-            var codigoNormalizado = NormalizarCodigoUnspsc(codigoProveedor);
-            if (codigoNormalizado is null)
-                continue;
-
-            if (codigoNormalizado.Equals(codigoProceso, StringComparison.Ordinal) ||
-                codigoNormalizado.AsSpan(0, 6).SequenceEqual(codigoProceso.AsSpan(0, 6)))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static string? NormalizarCodigoUnspsc(string? codigo)
-    {
-        if (string.IsNullOrWhiteSpace(codigo))
-            return null;
-
-        var normalizado = codigo.Trim();
-        if (normalizado.StartsWith("V1.", StringComparison.OrdinalIgnoreCase))
-            normalizado = normalizado[3..];
-        else if (normalizado.StartsWith("V1", StringComparison.OrdinalIgnoreCase))
-            normalizado = normalizado[2..];
-
-        return normalizado.Length == 8 && normalizado.All(char.IsDigit)
-            ? normalizado
-            : null;
-    }
-
-    private static bool ProcesoCoincideConAlgunaPalabraClave(IEnumerable<string> palabrasClave, string? objetoProceso)
-    {
-        foreach (var palabraClave in palabrasClave)
-        {
-            if (string.IsNullOrWhiteSpace(palabraClave))
-                continue;
-
-            if (ContienePalabraClave(objetoProceso, palabraClave))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool ContienePalabraClave(string? texto, string palabraClave)
-    {
-        if (string.IsNullOrWhiteSpace(texto)) return false;
-
-        var keyword = palabraClave.Trim();
-        if (keyword.Length == 0) return false;
-
-        // Acrónimos o keywords cortas como "IA", "BTL", "ATL" no pueden usar Contains,
-        // porque producen falsos positivos dentro de palabras como "asistencial" o "social".
-        if (keyword.Length <= 3)
-        {
-            var pattern = $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(keyword)}(?![\p{{L}}\p{{N}}])";
-            return Regex.IsMatch(texto, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        }
-
-        return texto.Contains(keyword, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private sealed class CandidatoProceso
-    {
-        public CandidatoProceso(global::Secop.Application.DTOs.SecopProcesoDto dto, bool esKeywordOnly)
-        {
-            Dto = dto;
-            EsKeywordOnly = esKeywordOnly;
-        }
-
-        public global::Secop.Application.DTOs.SecopProcesoDto Dto { get; }
-        public bool EsKeywordOnly { get; }
-        public HashSet<Proveedor> Proveedores { get; } = [];
-    }
 }

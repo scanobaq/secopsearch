@@ -1,4 +1,5 @@
 using FluentAssertions;
+using System.Reflection;
 using Secop.Domain.Entities;
 using Secop.Domain.Enums;
 
@@ -100,5 +101,20 @@ public class ProcesoTests
         var proceso = CrearProceso(tipoContrato: tipoContrato);
 
         proceso.EsSoloEsal().Should().BeFalse();
+    }
+
+    [Fact]
+    public void EsSoloEsal_DespuesDeHidratacionEF_ReturnsTrue()
+    {
+        var constructor = typeof(Proceso).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            Type.EmptyTypes,
+            modifiers: null);
+        var proceso = (Proceso)constructor!.Invoke(null);
+        typeof(Proceso).GetProperty(nameof(Proceso.TipoContrato))!
+            .SetValue(proceso, "Decreto 092 de 2017");
+
+        proceso.EsSoloEsal().Should().BeTrue();
     }
 }

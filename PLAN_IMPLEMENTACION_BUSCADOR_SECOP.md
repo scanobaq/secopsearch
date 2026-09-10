@@ -435,45 +435,13 @@ public class ScoringService : IScoringService
 
 ---
 
-### Secop.Worker (monitoreo periódico)
+### Secop.Worker (alertas RUP periódicas)
 
 ```
 Secop.Worker/
 ├── Workers/
-│   ├── SecopMonitorWorker.cs     // corre cada hora
 │   └── RupAlertaWorker.cs        // corre una vez al día
 └── Program.cs
-```
-
-```csharp
-// SecopMonitorWorker.cs
-public class SecopMonitorWorker : BackgroundService
-{
-    private readonly IServiceProvider _services;
-    private readonly ILogger<SecopMonitorWorker> _logger;
-    private static readonly TimeSpan Intervalo = TimeSpan.FromHours(1);
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                using var scope = _services.CreateScope();
-                var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
-
-                await mediator.Send(new SincronizarProcesosCommand(), stoppingToken);
-                _logger.LogInformation("Sincronización SECOP completada: {Hora}", DateTime.Now);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error en sincronización SECOP");
-            }
-
-            await Task.Delay(Intervalo, stoppingToken);
-        }
-    }
-}
 ```
 
 ---
@@ -730,13 +698,9 @@ X-App-Token: {SECOP_APP_TOKEN}
 - [ ] Prueba unitaria: dado un proveedor y un proceso, el puntaje es correcto
 - [ ] Prueba de integración: dado el perfil de Logística, encuentra procesos de eventos
 
-### Fase 3 — Worker de monitoreo (semana 3)
-**Objetivo:** El sistema detecta procesos nuevos automáticamente cada hora.
+### Fase 3 — Alertas RUP (semana 3)
+**Objetivo:** La sincronización de procesos se activa manualmente y las alertas RUP se ejecutan periódicamente.
 
-- [ ] Implementar SecopMonitorWorker (BackgroundService)
-- [ ] Lógica de detección de procesos nuevos (comparar con último timestamp)
-- [ ] Lógica de detección de procesos desiertos
-- [ ] Lógica de detección de adendas (cambios en procesos existentes)
 - [ ] RupAlertaWorker: alerta 30 días antes del vencimiento del RUP
 - [ ] Logs de cada ejecución en consola y en BD
 
@@ -860,7 +824,7 @@ X-App-Token: {SECOP_APP_TOKEN}
 
 5. **Los embeddings se calculan una sola vez** — al registrar un proveedor o al ingestar un proceso nuevo. No recalcular en cada búsqueda.
 
-6. **La similitud mínima para entrar al scoring es 0.65** — si la similitud es menor, el proceso se descarta sin calcular el puntaje completo (optimización de costo de BD).
+6. **La similitud mínima global para entrar a evaluación es 0.40 inclusivo** — si la similitud es menor, el proceso se descarta antes de persistir la evaluación.
 
 7. **El campo `fecha_de_ultima_publicaci`** en la API de SECOP tiene ese nombre exacto con la `i` al final sin acento — bug conocido del dataset. Usarlo tal cual.
 

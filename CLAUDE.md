@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**SecopSearch** is an intelligent SECOP II monitoring system that continuously scans Colombian government procurement processes, scores them against a business group's profile, and notifies via Telegram bot. No web frontend — Telegram is the only UI.
+**SecopSearch** is an intelligent SECOP II monitoring system that manually ingests Colombian government procurement processes, scores them against a business group's profile, and notifies via Telegram bot. No web frontend — Telegram is the only UI.
 
 **Client:** Colombian business group with 4 units and $14B COP combined financial capacity.
 
@@ -67,7 +67,7 @@ dotnet run --project src/Secop.Api
 
 ## Architecture Rules
 
-1. **Domain has zero external dependencies.** No NuGet packages except the BCL. Business rules (e.g., RUP inhabilitante) live here.
+1. **Domain has zero external dependencies.** No NuGet packages except the BCL. Business rules live here.
 
 2. **Application depends only on Domain.** Use cases call infrastructure only through interfaces (`IEmbeddingService`, `ISecopApiClient`, `IAlertaService`, etc.). Never instantiate `OpenAiEmbeddingService` or `TelegramBotService` directly in Application.
 
@@ -77,10 +77,10 @@ dotnet run --project src/Secop.Api
 
 ## Key Business Rules
 
-- **RUP vencido is automatically disqualifying** — `Puntaje.Inhabilitado()` sets total to 0 regardless of other scores. This rule must stay in Domain.
-- **Minimum similarity threshold of 0.65** — processes below this skip full scoring (cost optimization).
-- **Scoring components (0–100 total):** Similarity 35 + Requirements 25 + Time 20 + Competition 12 + Entity history 8.
-- **Labels:** ≥70 → Proponer, ≥40 → Analizar, <40 → Descartar.
+- **RUP expiration is intentionally ignored during experimentation** — configured providers are assumed current. Restore and validate the eligibility blocker before production. Existing evaluations require explicit reset or recalculation.
+- **Minimum similarity threshold is inclusively 0.40** — processes below this skip evaluation and persistence.
+- **Evaluation dimensions:** semantic relevance percentage, eligibility, and actionability. There is no synthetic total score.
+- **Automatic recommendation:** only `Analyze`; `Propose` is exclusively a human decision.
 - **Embeddings are computed once** — on proveedor registration and on new proceso ingestion. Never recompute per search.
 
 ## SECOP II API Gotchas
@@ -120,7 +120,7 @@ SECOP_APP_TOKEN=
 
 1. Domain + EF Core + SECOP API client baseline
 2. Embedding engine + scoring
-3. Background worker (hourly sync, daily RUP alerts)
+3. Manual process synchronization + daily RUP alert worker
 4. Telegram bot (alerts + inline actions)
 5. Claude PDF pliego analysis
 6. Production deployment (Railway/Render + Supabase + webhook)

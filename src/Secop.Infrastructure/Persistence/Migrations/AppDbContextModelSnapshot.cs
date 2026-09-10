@@ -279,6 +279,11 @@ namespace Secop.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Secop.Domain.Entities.Puntaje", b =>
                 {
+                    b.Property<string>("Accionabilidad")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("accionabilidad");
+
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
@@ -297,6 +302,11 @@ namespace Secop.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("es_inhabilitado");
 
+                    b.Property<string>("Elegibilidad")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("elegibilidad");
+
                     b.Property<string>("Etiqueta")
                         .IsRequired()
                         .HasColumnType("text")
@@ -310,6 +320,19 @@ namespace Secop.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("ProveedorId")
                         .HasColumnType("uuid")
                         .HasColumnName("proveedor_id");
+
+                    b.PrimitiveCollection<List<string>>("Razones")
+                        .IsRequired()
+                        .HasColumnType("text[]")
+                        .HasColumnName("razones");
+
+                    b.Property<string>("RecomendacionAutomatica")
+                        .HasColumnType("text")
+                        .HasColumnName("recomendacion_automatica");
+
+                    b.Property<float>("RelevanciaPorcentaje")
+                        .HasColumnType("real")
+                        .HasColumnName("relevancia_porcentaje");
 
                     b.Property<float>("PuntajeCompetencia")
                         .HasColumnType("real")

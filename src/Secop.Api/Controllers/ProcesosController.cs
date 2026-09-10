@@ -22,18 +22,17 @@ public class ProcesosController : ControllerBase
 
     public ProcesosController(IMediator mediator, IProveedorRepository proveedores)
     {
-        _mediator    = mediator;
+        _mediator = mediator;
         _proveedores = proveedores;
     }
 
     /// <summary>
-    /// Lista procesos de SECOP II compatibles con el perfil del grupo empresarial, ordenados por puntaje descendente.
+    /// Lista procesos evaluados para el grupo, ordenados por relevancia semántica descendente.
     /// </summary>
     /// <remarks>
-    /// Consulta los puntajes precalculados en base de datos. Los procesos ya pasaron el umbral mínimo
-    /// de similitud semántica (0.65) y tienen un puntaje calculado con los 5 componentes del scoring:
-    /// similitud (35), requisitos habilitantes (25), tiempo disponible (20), competencia (12), historial entidad (8).
-    /// Etiquetas: Proponer ≥70 pts · Analizar ≥40 pts · Descartar &lt;40 pts.
+    /// Consulta evaluaciones persistidas que pasaron el umbral inclusivo de similitud semántica 0.40.
+    /// Expone relevancia porcentual, elegibilidad, accionabilidad y razones. La recomendación automática
+    /// solo puede ser Analyze; Propose queda reservada para una decisión humana.
     /// </remarks>
     /// <param name="proveedorId">Filtra por proveedor específico. Si se omite, devuelve para todo el grupo.</param>
     /// <param name="limite">Número máximo de resultados (default 20).</param>
@@ -48,7 +47,7 @@ public class ProcesosController : ControllerBase
     }
 
     /// <summary>
-    /// Devuelve el detalle completo y puntaje de un proceso específico.
+    /// Devuelve el detalle y la evaluación persistida de un proceso específico.
     /// </summary>
     /// <param name="id">Identificador del proceso en SECOP II (ej: ES-CO-XXXX-XXXX).</param>
     /// <param name="proveedorId">Proveedor para el que se devuelve el puntaje. Si se omite, usa el primer proveedor con puntaje calculado.</param>
@@ -63,24 +62,24 @@ public class ProcesosController : ControllerBase
     }
 
     /// <summary>
-    /// Dispara manualmente un ciclo de sincronización con SECOP II (equivalente a un tick del worker horario).
+    /// Dispara manualmente un ciclo de sincronización con SECOP II.
     /// </summary>
     /// <remarks>
     /// Ejecuta el flujo completo:
-    /// 1. Descarga procesos publicados entre `desde` y `hasta` (o desde hace N horas si se omiten las fechas).
+    /// 1. Descarga procesos cuya fecha de última publicación está dentro de `[desde, hasta)`.
     /// 2. Filtra duplicados (procesos ya existentes en BD).
     /// 3. Genera embedding OpenAI para cada proceso nuevo (Título + Objeto).
-    /// 4. Calcula puntaje para cada proveedor con embedding (si similitud ≥ 0.65).
-    /// 5. Envía alerta Telegram al proveedor si el puntaje ≥ 70.
+    /// 4. Evalúa cada proveedor con embedding si la similitud es ≥ 0.40.
+    /// 5. Envía una recomendación Analyze solo si la evaluación es alertable.
     ///
     /// Ejemplos:
-    /// - `?desde=2026-04-01` → procesos desde el 1 de abril hasta ahora.
-    /// - `?desde=2026-04-01&amp;hasta=2026-04-10` → intervalo exacto.
-    /// - `?horasAtras=48` → últimas 48 horas (usado por el worker automático).
+    /// - `?desde=2026-04-01` → procesos publicados desde el 1 de abril.
+    /// - `?desde=2026-04-01&amp;hasta=2026-04-10` → publicaciones en `[desde, hasta)`.
+    /// - `?horasAtras=48` → procesos publicados durante las últimas 48 horas.
     /// </remarks>
-    /// <param name="desde">Fecha inicio del intervalo (UTC). Si se omite, se usa `horasAtras`.</param>
-    /// <param name="hasta">Fecha fin del intervalo (UTC). Si se omite, se usa la hora actual.</param>
-    /// <param name="horasAtras">Horas hacia atrás desde ahora (default 2). Solo se usa si `desde` no se especifica.</param>
+    /// <param name="desde">Inicio inclusivo del intervalo de última publicación en SECOP (UTC). Si se omite, se usa `horasAtras`.</param>
+    /// <param name="hasta">Fin exclusivo del intervalo de última publicación en SECOP (UTC). Si se omite, se usa la hora actual.</param>
+    /// <param name="horasAtras">Horas de publicación que se consultan hacia atrás desde ahora (default 2). Solo se usa si `desde` no se especifica.</param>
     [HttpPost("sincronizar")]
     public async Task<IActionResult> Sincronizar(
         [FromQuery] DateTime? desde = null,
@@ -99,7 +98,8 @@ public class ProcesosController : ControllerBase
     /// </summary>
     /// <remarks>
     /// Para cada proveedor: verifica si el RUP vence en los próximos 30 días y envía alerta Telegram si corresponde.
-    /// El RUP vencido es inhabilitante — los procesos de un proveedor con RUP vencido reciben puntaje 0 automáticamente.
+    /// Durante la experimentación, un RUP vencido no afecta la elegibilidad de oportunidades;
+    /// este bloqueo debe restaurarse y validarse antes de producción.
     /// </remarks>
     [HttpPost("alertas-rup")]
     public async Task<IActionResult> EnviarAlertasRup(CancellationToken ct = default)

@@ -23,6 +23,52 @@ public class SecopProcesoDto
     [JsonPropertyName("precio_base")]
     public string? Presupuesto { get; set; }
 
+    public bool TryObtenerPresupuestoCop(out decimal presupuestoCop)
+    {
+        presupuestoCop = default;
+        var valor = Presupuesto?.Trim();
+        if (string.IsNullOrEmpty(valor) || !EsLiteralDecimalAscii(valor) ||
+            !decimal.TryParse(valor, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var resultado) ||
+            resultado <= 0 || Canonicalizar(valor) != resultado.ToString("0.############################", CultureInfo.InvariantCulture))
+            return false;
+
+        presupuestoCop = resultado;
+        return true;
+    }
+
+    private static bool EsLiteralDecimalAscii(string valor)
+    {
+        var puntoEncontrado = false;
+        for (var indice = 0; indice < valor.Length; indice++)
+        {
+            var caracter = valor[indice];
+            if (caracter is >= '0' and <= '9')
+                continue;
+
+            if (caracter == '.' && !puntoEncontrado && indice > 0 && indice < valor.Length - 1)
+            {
+                puntoEncontrado = true;
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string Canonicalizar(string valor)
+    {
+        var partes = valor.Split('.');
+        var entero = partes[0].TrimStart('0');
+        entero = entero.Length == 0 ? "0" : entero;
+        if (partes.Length == 1)
+            return entero;
+
+        var fraccion = partes[1].TrimEnd('0');
+        return fraccion.Length == 0 ? entero : $"{entero}.{fraccion}";
+    }
+
     // El dataset trunca el nombre: "fecha_de_recepcion_de" (sin "_ofertas")
     [JsonPropertyName("fecha_de_recepcion_de")]
     public string? FechaCierre { get; set; }

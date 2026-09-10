@@ -31,14 +31,12 @@ public class Proceso
     // ── Categorías UNSPSC adicionales (más allá de codigo_principal) ────────
     public List<string> CategoriasAdicionales { get; private set; }
 
-    // ── Señales de competencia (para el componente de puntaje) ──────────────
+    // ── Metadatos históricos de participación (no usados por la evaluación) ─
     public int? ProveedoresInvitados { get; private set; }
     public int? ProveedoresQueManifestaron { get; private set; }
     public int? RespuestasAlProcedimiento { get; private set; }
     public int? ConteoRespuestasOfertas { get; private set; }
     public int? ProveedoresUnicosCon { get; private set; }
-
-    private readonly bool _esSoloEsal;
 
     private Proceso()
     {
@@ -99,40 +97,16 @@ public class Proceso
         ConteoRespuestasOfertas = conteoRespuestasOfertas;
         ProveedoresUnicosCon = proveedoresUnicosCon;
 
-        _esSoloEsal = tipoContrato?.Contains("092", StringComparison.OrdinalIgnoreCase) == true &&
-                      tipoContrato.Contains("2017", StringComparison.OrdinalIgnoreCase);
     }
-
-    public bool EstaVigente() => FechaCierre > DateTime.UtcNow;
 
     public bool EsDesierto() => Estado == EstadoProceso.Desierto;
 
     /// <summary>
     /// Indica si el proceso solo aplica a Entidades Sin Ánimo de Lucro (Decreto 092 de 2017).
     /// </summary>
-    public bool EsSoloEsal() => _esSoloEsal;
-
-    /// <summary>
-    /// Cuenta días hábiles (lunes–viernes) entre hoy y la fecha de cierre.
-    /// No descuenta festivos colombianos (simplificación fase 1).
-    /// </summary>
-    public int DiasHabilesRestantes()
-    {
-        var hoy = DateTime.UtcNow.Date;
-        var cierre = FechaCierre.Date;
-
-        if (cierre <= hoy) return 0;
-
-        int dias = 0;
-        var fecha = hoy.AddDays(1);
-        while (fecha <= cierre)
-        {
-            if (fecha.DayOfWeek is not DayOfWeek.Saturday and not DayOfWeek.Sunday)
-                dias++;
-            fecha = fecha.AddDays(1);
-        }
-        return dias;
-    }
+    public bool EsSoloEsal() =>
+        TipoContrato?.Contains("092", StringComparison.OrdinalIgnoreCase) == true &&
+        TipoContrato.Contains("2017", StringComparison.OrdinalIgnoreCase);
 
     public void AsignarEmbedding(float[] embedding) => Embedding = embedding;
 

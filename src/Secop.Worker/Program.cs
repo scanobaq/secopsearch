@@ -12,7 +12,6 @@ builder.Services.AddMediatR(cfg =>
 builder.Services.AddInfrastructure(builder.Configuration);
 
 // Workers periódicos
-builder.Services.AddHostedService<SecopMonitorWorker>();
 builder.Services.AddHostedService<RupAlertaWorker>();
 
 var host = builder.Build();

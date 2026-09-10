@@ -1,4 +1,5 @@
 using Secop.Domain.Entities;
+using Secop.Domain.Constants;
 
 namespace Secop.Application.Interfaces;
 
@@ -13,11 +14,11 @@ public interface IProcesoRepository
 
     /// <summary>
     /// Búsqueda vectorial por similitud coseno usando pgvector.
-    /// Solo devuelve procesos cuya similitud supere el umbral mínimo.
+    /// Solo devuelve procesos cuya similitud alcance o supere el umbral mínimo.
     /// </summary>
     Task<IEnumerable<(Proceso Proceso, float Similitud)>> BuscarPorSimilitudAsync(
         float[] embedding,
-        float umbralMinimo = 0.65f,
+        float umbralMinimo = PoliticaEvaluacion.UmbralSimilitud,
         int limite = 50,
         CancellationToken ct = default);
 }
