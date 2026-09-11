@@ -47,7 +47,12 @@ public class RecalcularPuntajesHandler : IRequestHandler<RecalcularPuntajesComma
             foreach (var proceso in procesosActivos)
             {
                 var similitud = await _embedding.CalcularSimilitudAsync(proceso.Embedding!, proveedor.Embedding!);
-                if (similitud < PoliticaEvaluacion.UmbralSimilitud) continue;
+                if (!PoliticaEvaluacion.Admitir(
+                        similitud,
+                        proveedor.CodigosUnspsc,
+                        proceso.CodigoPrincipalCategoria,
+                        proceso.CategoriasAdicionales))
+                    continue;
 
                 var puntaje = await _scoring.CalcularAsync(proveedor, proceso, similitud);
                 await _puntajes.GuardarAsync(puntaje, ct);

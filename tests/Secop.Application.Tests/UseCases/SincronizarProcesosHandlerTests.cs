@@ -150,7 +150,7 @@ public class SincronizarProcesosHandlerTests
 
     [Theory]
     [InlineData(0.399999f, false)]
-    [InlineData(0.40f, true)]
+    [InlineData(0.40f, false)]
     [InlineData(0.45f, true)]
     [InlineData(0.50f, true)]
     public async Task Handle_AplicaUmbralSemanticoInclusivo(float similitud, bool debeCalcularPuntaje)
@@ -199,6 +199,49 @@ public class SincronizarProcesosHandlerTests
                 proveedor,
                 It.IsAny<CancellationToken>()),
             debeCalcularPuntaje ? Times.Once() : Times.Never());
+    }
+
+    [Fact]
+    public async Task Handle_SimilitudBorderlineConClasePrincipalCoincidente_PersisteYPuntua()
+    {
+        const string procesoId = "PROC-UNSPSC-PRIMARY";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(codigosUnspsc: ["80101599"], embedding: embedding);
+        var dto = CrearDtoAbierto(procesoId, codigoPrincipalCategoria: " V1.80101500 ");
+        ConfigurarFuenteGeneral([dto]);
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>())).ReturnsAsync([proveedor]);
+        ConfigurarProcesamiento(procesoId, embedding, 0.40f);
+        _scoring.Setup(s => s.CalcularAsync(proveedor, It.IsAny<Proceso>(), 0.40f))
+            .ReturnsAsync(CrearPuntaje(procesoId, proveedor.Id));
+        Proceso? guardado = null;
+        _procesos.Setup(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()))
+            .Callback<Proceso, CancellationToken>((proceso, _) => guardado = proceso);
+
+        var nuevos = await CrearHandler().Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        nuevos.Should().Be(1);
+        guardado!.CodigoPrincipalCategoria.Should().Be("80101500");
+        _scoring.Verify(s => s.CalcularAsync(proveedor, guardado, 0.40f), Times.Once());
+    }
+
+    [Fact]
+    public async Task Handle_SimilitudBorderlineConEvidenciaInvalida_NoPersisteNiPuntuaOAlerta()
+    {
+        const string procesoId = "PROC-UNSPSC-INVALID";
+        var embedding = new float[] { 0.5f };
+        var proveedor = CrearProveedor(codigosUnspsc: ["٨٠١٠١٥٩٩"], embedding: embedding, chatId: 123);
+        var dto = CrearDtoAbierto(procesoId, codigoPrincipalCategoria: "V1.80101500");
+        ConfigurarFuenteGeneral([dto]);
+        _proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>())).ReturnsAsync([proveedor]);
+        ConfigurarProcesamiento(procesoId, embedding, 0.40f);
+
+        var nuevos = await CrearHandler().Handle(new SincronizarProcesosCommand(DateTime.UtcNow.AddHours(-2)), default);
+
+        nuevos.Should().Be(0);
+        _procesos.Verify(r => r.GuardarAsync(It.IsAny<Proceso>(), It.IsAny<CancellationToken>()), Times.Never());
+        _scoring.Verify(s => s.CalcularAsync(It.IsAny<Proveedor>(), It.IsAny<Proceso>(), It.IsAny<float>()), Times.Never());
+        _alertas.Verify(a => a.EnviarAlertaProcesoAsync(
+            It.IsAny<long>(), It.IsAny<Puntaje>(), It.IsAny<Proceso>(), It.IsAny<Proveedor>(), It.IsAny<CancellationToken>()), Times.Never());
     }
 
     [Fact]

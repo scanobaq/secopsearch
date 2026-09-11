@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
 using Secop.Domain.Enums;
+using Secop.Domain.ValueObjects;
 
 namespace Secop.Application.DTOs;
 
@@ -207,18 +208,27 @@ public class SecopProcesoDto
         return CategoriasAdicionales
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Select(QuitarPrefijoV1)
+            .Select(ObtenerCodigoCanonico)
+            .Where(codigo => codigo is not null)
+            .Cast<string>()
             .ToList();
     }
+
+    public string? ObtenerCodigoPrincipalCategoria() =>
+        ObtenerCodigoCanonico(QuitarPrefijoV1(CodigoPrincipalCategoria?.Trim() ?? string.Empty));
 
     // El campo real categorias_adicionales del API nunca trae punto tras "V1"
     // (ej. "V172101500"), a diferencia de codigo_principal_de_categoria que sí
     // lo trae ("V1.80111500"). Se soportan ambos formatos por las dudas.
-    private static string QuitarPrefijoV1(string codigo) => codigo switch
+    private static string QuitarPrefijoV1(string codigo) => codigo.Trim() switch
     {
         var c when c.StartsWith("V1.", StringComparison.OrdinalIgnoreCase) => c[3..],
         var c when c.StartsWith("V1", StringComparison.OrdinalIgnoreCase) => c[2..],
         _ => codigo
     };
+
+    private static string? ObtenerCodigoCanonico(string codigo) =>
+        CodigoUnspsc.TryCreate(codigo, out var codigoUnspsc) ? codigoUnspsc!.Valor : null;
 
     public EstadoProceso ObtenerEstado()
     {

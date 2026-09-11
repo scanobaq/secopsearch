@@ -258,6 +258,30 @@ public class SecopProcesoDtoTests
         dto!.CodigoPrincipalCategoria.Should().Be("V1.12345678");
     }
 
+    [Fact]
+    public void ObtenerCodigosUnspsc_NormalizaPrefijosYDescartaValoresInvalidos()
+    {
+        var dto = new SecopProcesoDto
+        {
+            CodigoPrincipalCategoria = " V1.80101500 ",
+            CategoriasAdicionales = " V180101599 , V1.٨٠١٠١٥٠٠ , No definido "
+        };
+
+        dto.ObtenerCodigoPrincipalCategoria().Should().Be("80101500");
+        dto.ObtenerCategoriasAdicionales().Should().BeEquivalentTo(["80101599"]);
+    }
+
+    [Theory]
+    [InlineData("UNSPECIFIED")]
+    [InlineData("No definido")]
+    [InlineData("V1.8010150X")]
+    public void ObtenerCodigoPrincipalCategoria_CodigoInvalido_NoEntregaEvidencia(string valor)
+    {
+        var dto = new SecopProcesoDto { CodigoPrincipalCategoria = valor };
+
+        dto.ObtenerCodigoPrincipalCategoria().Should().BeNull();
+    }
+
     [Theory]
     [InlineData("  60000000  ", 60_000_000)]
     [InlineData("60000000.50", 60_000_000.50)]

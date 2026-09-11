@@ -82,6 +82,21 @@ public class ProcesoTests
         proceso.CategoriasAdicionales.Should().NotBeNull().And.BeEmpty();
     }
 
+    [Fact]
+    public void Constructor_CodigoPrincipalOpcional_ConservaCompatibilidadPosicional()
+    {
+        var procesoExistente = new Proceso(
+            "PROC-LEGACY", "Título", "Objeto", 1m, DateTime.UtcNow, DateTime.UtcNow,
+            ModalidadContrato.LicitacionPublica, EstadoProceso.Activo, "Entidad", "900", "Bogotá", "url");
+        var procesoConCodigo = new Proceso(
+            "PROC-PRIMARY", "Título", "Objeto", 1m, DateTime.UtcNow, DateTime.UtcNow,
+            ModalidadContrato.LicitacionPublica, EstadoProceso.Activo, "Entidad", "900", "Bogotá", "url",
+            codigoPrincipalCategoria: "80101500");
+
+        procesoExistente.CodigoPrincipalCategoria.Should().BeNull();
+        procesoConCodigo.CodigoPrincipalCategoria.Should().Be("80101500");
+    }
+
     [Theory]
     [InlineData("Decreto 092 de 2017")]
     [InlineData("DECRETO 092 DE 2017")]

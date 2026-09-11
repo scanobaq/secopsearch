@@ -89,7 +89,11 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
                 if (!maximumSimilarity.HasValue || similitud > maximumSimilarity.Value)
                     maximumSimilarity = similitud;
 
-                if (similitud >= PoliticaEvaluacion.UmbralSimilitud)
+                if (PoliticaEvaluacion.Admitir(
+                        similitud,
+                        proveedor.CodigosUnspsc,
+                        proceso.CodigoPrincipalCategoria,
+                        proceso.CategoriasAdicionales))
                     proveedoresCalificados.Add((proveedor, similitud));
             }
 
@@ -189,7 +193,8 @@ public class SincronizarProcesosHandler : IRequestHandler<SincronizarProcesosCom
             proveedoresQueManifestaron: ParsearEntero(dto.ProveedoresQueManifestaron),
             respuestasAlProcedimiento: ParsearEntero(dto.RespuestasAlProcedimiento),
             conteoRespuestasOfertas: ParsearEntero(dto.ConteoRespuestasOfertas),
-            proveedoresUnicosCon: ParsearEntero(dto.ProveedoresUnicosCon)
+            proveedoresUnicosCon: ParsearEntero(dto.ProveedoresUnicosCon),
+            codigoPrincipalCategoria: dto.ObtenerCodigoPrincipalCategoria()
         );
     }
 

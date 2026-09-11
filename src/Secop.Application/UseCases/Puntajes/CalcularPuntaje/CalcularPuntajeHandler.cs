@@ -36,7 +36,12 @@ public class CalcularPuntajeHandler : IRequestHandler<CalcularPuntajeCommand, Pu
         if (proceso.Embedding is null || proveedor.Embedding is null) return null;
 
         var similitud = await _embedding.CalcularSimilitudAsync(proceso.Embedding, proveedor.Embedding);
-        if (similitud < PoliticaEvaluacion.UmbralSimilitud) return null;
+        if (!PoliticaEvaluacion.Admitir(
+                similitud,
+                proveedor.CodigosUnspsc,
+                proceso.CodigoPrincipalCategoria,
+                proceso.CategoriasAdicionales))
+            return null;
 
         var puntaje = await _scoring.CalcularAsync(proveedor, proceso, similitud);
 

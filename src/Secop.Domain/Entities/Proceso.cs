@@ -29,6 +29,7 @@ public class Proceso
     public DateTime? FechaAdjudicacion { get; private set; }
 
     // ── Categorías UNSPSC adicionales (más allá de codigo_principal) ────────
+    public string? CodigoPrincipalCategoria { get; private set; }
     public List<string> CategoriasAdicionales { get; private set; }
 
     // ── Metadatos históricos de participación (no usados por la evaluación) ─
@@ -69,7 +70,8 @@ public class Proceso
         int? proveedoresQueManifestaron = null,
         int? respuestasAlProcedimiento = null,
         int? conteoRespuestasOfertas = null,
-        int? proveedoresUnicosCon = null)
+        int? proveedoresUnicosCon = null,
+        string? codigoPrincipalCategoria = null)
     {
         Id = id;
         Titulo = titulo;
@@ -90,6 +92,7 @@ public class Proceso
         AdjudicadoA = adjudicadoA;
         ValorAdjudicacion = valorAdjudicacion;
         FechaAdjudicacion = fechaAdjudicacion;
+        CodigoPrincipalCategoria = codigoPrincipalCategoria;
         CategoriasAdicionales = categoriasAdicionales ?? [];
         ProveedoresInvitados = proveedoresInvitados;
         ProveedoresQueManifestaron = proveedoresQueManifestaron;

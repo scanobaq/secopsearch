@@ -38,6 +38,9 @@ public class ProcesoConfiguration : IEntityTypeConfiguration<Proceso>
         builder.Property(p => p.FechaAdjudicacion)   .HasColumnName("fecha_adjudicacion");
 
         // ── Categorías UNSPSC adicionales ────────────────────────────────────
+        builder.Property(p => p.CodigoPrincipalCategoria)
+            .HasColumnName("codigo_principal_categoria");
+
         builder.Property(p => p.CategoriasAdicionales)
             .HasColumnName("categorias_adicionales")
             .HasColumnType("text[]");

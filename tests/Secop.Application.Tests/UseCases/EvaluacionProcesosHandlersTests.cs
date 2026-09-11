@@ -5,6 +5,7 @@ using Secop.Application.DTOs;
 using Secop.Application.Interfaces;
 using Secop.Application.UseCases.Procesos.BuscarProcesosCompatibles;
 using Secop.Application.UseCases.Procesos.ObtenerDetalleProceso;
+using Secop.Application.UseCases.Puntajes.CalcularPuntaje;
 using Secop.Application.UseCases.Puntajes.RecalcularPuntajes;
 using Secop.Domain.Entities;
 using Secop.Domain.Enums;
@@ -15,20 +16,22 @@ public class EvaluacionProcesosHandlersTests
 {
     private static readonly float[] Embedding = [0.5f];
 
-    private static Proveedor CrearProveedor()
+    private static Proveedor CrearProveedor(List<string>? codigosUnspsc = null)
     {
         var proveedor = new Proveedor(
             "Proveedor",
             "900100200",
             DateTime.UtcNow.AddYears(1),
             1_000_000m,
-            [],
+            codigosUnspsc ?? [],
             []);
         proveedor.AsignarEmbedding(Embedding);
         return proveedor;
     }
 
-    private static Proceso CrearProceso()
+    private static Proceso CrearProceso(
+        string? codigoPrincipalCategoria = null,
+        List<string>? categoriasAdicionales = null)
     {
         var proceso = new Proceso(
             "PROC-001",
@@ -42,7 +45,9 @@ public class EvaluacionProcesosHandlersTests
             "Entidad",
             "900999888",
             "Bogotá",
-            "https://secop.gov.co");
+            "https://secop.gov.co",
+            categoriasAdicionales: categoriasAdicionales,
+            codigoPrincipalCategoria: codigoPrincipalCategoria);
         proceso.AsignarEmbedding(Embedding);
         return proceso;
     }
@@ -71,7 +76,7 @@ public class EvaluacionProcesosHandlersTests
 
     [Theory]
     [InlineData(0.399999f, 0)]
-    [InlineData(0.40f, 1)]
+    [InlineData(0.40f, 0)]
     [InlineData(0.45f, 1)]
     [InlineData(0.50f, 1)]
     public async Task Recalcular_AplicaMismoUmbralInclusivo(float similitud, int esperados)
@@ -106,6 +111,70 @@ public class EvaluacionProcesosHandlersTests
         puntajes.Verify(
             r => r.GuardarAsync(evaluacion, It.IsAny<CancellationToken>()),
             esperados == 1 ? Times.Once() : Times.Never());
+    }
+
+    [Fact]
+    public async Task CalcularPuntaje_YRecalcular_RechazanBorderlineSinEvidenciaYSinPersistir()
+    {
+        var procesos = new Mock<IProcesoRepository>();
+        var proveedores = new Mock<IProveedorRepository>();
+        var puntajes = new Mock<IPuntajeRepository>();
+        var embedding = new Mock<IEmbeddingService>();
+        var scoring = new Mock<IScoringService>();
+        var proceso = CrearProceso(codigoPrincipalCategoria: "80101600");
+        var proveedor = CrearProveedor(["80101599"]);
+        var evaluacion = CrearEvaluacion(proveedor);
+        procesos.Setup(r => r.ObtenerPorIdAsync(proceso.Id, It.IsAny<CancellationToken>())).ReturnsAsync(proceso);
+        procesos.Setup(r => r.ObtenerActivosAsync(It.IsAny<CancellationToken>())).ReturnsAsync([proceso]);
+        proveedores.Setup(r => r.ObtenerPorIdAsync(proveedor.Id, It.IsAny<CancellationToken>())).ReturnsAsync(proveedor);
+        proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>())).ReturnsAsync([proveedor]);
+        embedding.Setup(e => e.CalcularSimilitudAsync(Embedding, Embedding)).ReturnsAsync(0.40f);
+        scoring.Setup(s => s.CalcularAsync(proveedor, proceso, 0.40f)).ReturnsAsync(evaluacion);
+
+        var adHoc = new CalcularPuntajeHandler(
+            procesos.Object, proveedores.Object, puntajes.Object, embedding.Object, scoring.Object);
+        var recalcular = new RecalcularPuntajesHandler(
+            procesos.Object, proveedores.Object, puntajes.Object, embedding.Object, scoring.Object,
+            NullLogger<RecalcularPuntajesHandler>.Instance);
+
+        var resultadoAdHoc = await adHoc.Handle(new CalcularPuntajeCommand(proceso.Id, proveedor.Id), default);
+        var totalRecalculado = await recalcular.Handle(new RecalcularPuntajesCommand(), default);
+
+        resultadoAdHoc.Should().BeNull();
+        totalRecalculado.Should().Be(0);
+        puntajes.Verify(r => r.GuardarAsync(It.IsAny<Puntaje>(), It.IsAny<CancellationToken>()), Times.Never());
+    }
+
+    [Fact]
+    public async Task CalcularPuntaje_YRecalcular_AdmitenCoincidenciaAdicionalParaProcesoLegacy()
+    {
+        var procesos = new Mock<IProcesoRepository>();
+        var proveedores = new Mock<IProveedorRepository>();
+        var puntajes = new Mock<IPuntajeRepository>();
+        var embedding = new Mock<IEmbeddingService>();
+        var scoring = new Mock<IScoringService>();
+        var proceso = CrearProceso(categoriasAdicionales: ["80101500"]);
+        var proveedor = CrearProveedor(["80101599"]);
+        var evaluacion = CrearEvaluacion(proveedor);
+        procesos.Setup(r => r.ObtenerPorIdAsync(proceso.Id, It.IsAny<CancellationToken>())).ReturnsAsync(proceso);
+        procesos.Setup(r => r.ObtenerActivosAsync(It.IsAny<CancellationToken>())).ReturnsAsync([proceso]);
+        proveedores.Setup(r => r.ObtenerPorIdAsync(proveedor.Id, It.IsAny<CancellationToken>())).ReturnsAsync(proveedor);
+        proveedores.Setup(r => r.ObtenerTodosAsync(It.IsAny<CancellationToken>())).ReturnsAsync([proveedor]);
+        embedding.Setup(e => e.CalcularSimilitudAsync(Embedding, Embedding)).ReturnsAsync(0.40f);
+        scoring.Setup(s => s.CalcularAsync(proveedor, proceso, 0.40f)).ReturnsAsync(evaluacion);
+
+        var adHoc = new CalcularPuntajeHandler(
+            procesos.Object, proveedores.Object, puntajes.Object, embedding.Object, scoring.Object);
+        var recalcular = new RecalcularPuntajesHandler(
+            procesos.Object, proveedores.Object, puntajes.Object, embedding.Object, scoring.Object,
+            NullLogger<RecalcularPuntajesHandler>.Instance);
+
+        var resultadoAdHoc = await adHoc.Handle(new CalcularPuntajeCommand(proceso.Id, proveedor.Id), default);
+        var totalRecalculado = await recalcular.Handle(new RecalcularPuntajesCommand(), default);
+
+        resultadoAdHoc.Should().NotBeNull();
+        totalRecalculado.Should().Be(1);
+        puntajes.Verify(r => r.GuardarAsync(evaluacion, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Theory]
