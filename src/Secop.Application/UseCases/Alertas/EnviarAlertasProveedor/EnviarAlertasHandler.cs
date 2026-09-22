@@ -1,7 +1,6 @@
 using MediatR;
 using Microsoft.Extensions.Logging;
 using Secop.Application.Interfaces;
-using Secop.Domain.Enums;
 
 namespace Secop.Application.UseCases.Alertas.EnviarAlertasProveedor;
 
@@ -23,10 +22,10 @@ public class EnviarAlertasHandler : IRequestHandler<EnviarAlertasCommand>
         ILogger<EnviarAlertasHandler> logger)
     {
         _proveedores = proveedores;
-        _procesos    = procesos;
-        _puntajes    = puntajes;
-        _alertas     = alertas;
-        _logger      = logger;
+        _procesos = procesos;
+        _puntajes = puntajes;
+        _alertas = alertas;
+        _logger = logger;
     }
 
     public async Task Handle(EnviarAlertasCommand request, CancellationToken ct)
@@ -36,16 +35,16 @@ public class EnviarAlertasHandler : IRequestHandler<EnviarAlertasCommand>
 
         var chatId = proveedor.TelegramChatId.Value;
 
-        // Alertas de procesos con puntaje alto
+        // Alertas de evaluaciones reviewables y accionables.
         var puntajesProveedor = await _puntajes.ObtenerPorProveedorAsync(proveedor.Id, ct);
         var pendientes = puntajesProveedor
-            .Where(p => p.Etiqueta != EtiquetaProceso.Descartar && !p.EsInhabilitado)
+            .Where(p => p.EsAlertable)
             .ToList();
 
         foreach (var puntaje in pendientes)
         {
             var proceso = await _procesos.ObtenerPorIdAsync(puntaje.ProcesoId, ct);
-            if (proceso is null || !proceso.EstaVigente()) continue;
+            if (proceso is null) continue;
 
             await _alertas.EnviarAlertaProcesoAsync(chatId, puntaje, proceso, proveedor, ct);
         }

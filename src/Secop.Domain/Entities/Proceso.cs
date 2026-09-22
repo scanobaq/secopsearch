@@ -19,11 +19,32 @@ public class Proceso
     public float[]? Embedding { get; private set; }
     public DateTime SincronizadoEn { get; private set; }
 
+    // ── Clasificación y filtros (SPEC-01 a SPEC-09) ─────────────────────────
+    public ClasificacionRegimen Clasificacion { get; private set; }
+    public string? TipoContrato { get; private set; }
+
+    // ── Adjudicación real ────────────────────────────────────────────────────
+    public string? AdjudicadoA { get; private set; }
+    public decimal? ValorAdjudicacion { get; private set; }
+    public DateTime? FechaAdjudicacion { get; private set; }
+
+    // ── Categorías UNSPSC adicionales (más allá de codigo_principal) ────────
+    public string? CodigoPrincipalCategoria { get; private set; }
+    public List<string> CategoriasAdicionales { get; private set; }
+
+    // ── Metadatos históricos de participación (no usados por la evaluación) ─
+    public int? ProveedoresInvitados { get; private set; }
+    public int? ProveedoresQueManifestaron { get; private set; }
+    public int? RespuestasAlProcedimiento { get; private set; }
+    public int? ConteoRespuestasOfertas { get; private set; }
+    public int? ProveedoresUnicosCon { get; private set; }
+
     private Proceso()
     {
         Id = null!; Titulo = null!; Objeto = null!;
         NombreEntidad = null!; NitEntidad = null!;
         DepartamentoEntidad = null!; UrlProceso = null!;
+        CategoriasAdicionales = [];
     }
 
     public Proceso(
@@ -38,7 +59,19 @@ public class Proceso
         string nombreEntidad,
         string nitEntidad,
         string departamentoEntidad,
-        string urlProceso)
+        string urlProceso,
+        ClasificacionRegimen clasificacion = ClasificacionRegimen.Ley80,
+        string? tipoContrato = null,
+        string? adjudicadoA = null,
+        decimal? valorAdjudicacion = null,
+        DateTime? fechaAdjudicacion = null,
+        List<string>? categoriasAdicionales = null,
+        int? proveedoresInvitados = null,
+        int? proveedoresQueManifestaron = null,
+        int? respuestasAlProcedimiento = null,
+        int? conteoRespuestasOfertas = null,
+        int? proveedoresUnicosCon = null,
+        string? codigoPrincipalCategoria = null)
     {
         Id = id;
         Titulo = titulo;
@@ -53,33 +86,30 @@ public class Proceso
         DepartamentoEntidad = departamentoEntidad;
         UrlProceso = urlProceso;
         SincronizadoEn = DateTime.UtcNow;
-    }
 
-    public bool EstaVigente() => FechaCierre > DateTime.UtcNow;
+        Clasificacion = clasificacion;
+        TipoContrato = tipoContrato;
+        AdjudicadoA = adjudicadoA;
+        ValorAdjudicacion = valorAdjudicacion;
+        FechaAdjudicacion = fechaAdjudicacion;
+        CodigoPrincipalCategoria = codigoPrincipalCategoria;
+        CategoriasAdicionales = categoriasAdicionales ?? [];
+        ProveedoresInvitados = proveedoresInvitados;
+        ProveedoresQueManifestaron = proveedoresQueManifestaron;
+        RespuestasAlProcedimiento = respuestasAlProcedimiento;
+        ConteoRespuestasOfertas = conteoRespuestasOfertas;
+        ProveedoresUnicosCon = proveedoresUnicosCon;
+
+    }
 
     public bool EsDesierto() => Estado == EstadoProceso.Desierto;
 
     /// <summary>
-    /// Cuenta días hábiles (lunes–viernes) entre hoy y la fecha de cierre.
-    /// No descuenta festivos colombianos (simplificación fase 1).
+    /// Indica si el proceso solo aplica a Entidades Sin Ánimo de Lucro (Decreto 092 de 2017).
     /// </summary>
-    public int DiasHabilesRestantes()
-    {
-        var hoy = DateTime.UtcNow.Date;
-        var cierre = FechaCierre.Date;
-
-        if (cierre <= hoy) return 0;
-
-        int dias = 0;
-        var fecha = hoy.AddDays(1);
-        while (fecha <= cierre)
-        {
-            if (fecha.DayOfWeek is not DayOfWeek.Saturday and not DayOfWeek.Sunday)
-                dias++;
-            fecha = fecha.AddDays(1);
-        }
-        return dias;
-    }
+    public bool EsSoloEsal() =>
+        TipoContrato?.Contains("092", StringComparison.OrdinalIgnoreCase) == true &&
+        TipoContrato.Contains("2017", StringComparison.OrdinalIgnoreCase);
 
     public void AsignarEmbedding(float[] embedding) => Embedding = embedding;
 

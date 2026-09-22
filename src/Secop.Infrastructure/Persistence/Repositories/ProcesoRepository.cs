@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Secop.Application.Interfaces;
+using Secop.Domain.Constants;
 using Secop.Domain.Entities;
 
 namespace Secop.Infrastructure.Persistence.Repositories;
@@ -57,7 +58,10 @@ public class ProcesoRepository : IProcesoRepository
     /// Usa ADO.NET directo para poder leer la columna de similitud junto con la entidad.
     /// </summary>
     public async Task<IEnumerable<(Proceso Proceso, float Similitud)>> BuscarPorSimilitudAsync(
-        float[] embedding, float umbralMinimo = 0.65f, int limite = 50, CancellationToken ct = default)
+        float[] embedding,
+        float umbralMinimo = PoliticaEvaluacion.UmbralSimilitud,
+        int limite = 50,
+        CancellationToken ct = default)
     {
         var embStr = "[" + string.Join(",",
             embedding.Select(f => f.ToString("G6", CultureInfo.InvariantCulture))) + "]";

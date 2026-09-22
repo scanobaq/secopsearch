@@ -17,7 +17,13 @@ public class PuntajeRepository : IPuntajeRepository
     public async Task<IEnumerable<Puntaje>> ObtenerPorProveedorAsync(Guid proveedorId, CancellationToken ct) =>
         await _context.Puntajes
             .Where(p => p.ProveedorId == proveedorId)
-            .OrderByDescending(p => p.PuntajeTotal)
+            .OrderByDescending(p => p.RelevanciaPorcentaje)
+            .ToListAsync(ct);
+
+    public async Task<IEnumerable<Puntaje>> ObtenerPorProcesoAsync(string procesoId, CancellationToken ct) =>
+        await _context.Puntajes
+            .Where(p => p.ProcesoId == procesoId)
+            .OrderByDescending(p => p.RelevanciaPorcentaje)
             .ToListAsync(ct);
 
     public async Task GuardarAsync(Puntaje puntaje, CancellationToken ct)

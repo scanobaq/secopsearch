@@ -10,44 +10,42 @@ public class PuntajeTests
         new(
             procesoId: "PROC-001",
             proveedorId: Guid.NewGuid(),
-            puntajeTotal: 75f,
-            puntajeSimilitud: 28f,
-            puntajeRequisitos: 20f,
-            puntajeTiempo: 15f,
-            puntajeCompetencia: 8f,
-            puntajeEntidad: 4f,
-            etiqueta: EtiquetaProceso.Proponer,
-            advertencias: []);
+            relevanciaPorcentaje: 75f,
+            elegibilidad: EstadoElegibilidad.Eligible,
+            accionabilidad: EstadoAccionabilidad.Actionable,
+            recomendacionAutomatica: RecomendacionAutomatica.Analyze,
+            razones: [],
+            calculadoEn: DateTime.UtcNow);
 
     [Fact]
-    public void AgregarAdvertencia_AgregaAlColeccion()
+    public void AgregarRazon_AgregaAlColeccion()
     {
         var puntaje = CrearPuntaje();
 
-        puntaje.AgregarAdvertencia("Advertencia de prueba");
+        puntaje.AgregarRazon("Razón de prueba");
 
-        puntaje.Advertencias.Should().ContainSingle()
-            .Which.Should().Be("Advertencia de prueba");
+        puntaje.Razones.Should().ContainSingle()
+            .Which.Should().Be("Razón de prueba");
     }
 
     [Fact]
-    public void AgregarAdvertencia_NoAgregaDuplicadoCaseInsensitive()
+    public void AgregarRazon_NoAgregaDuplicadoCaseInsensitive()
     {
         var puntaje = CrearPuntaje();
-        puntaje.AgregarAdvertencia("Plazo muy corto");
+        puntaje.AgregarRazon("Plazo muy corto");
 
-        puntaje.AgregarAdvertencia("plazo muy corto");
+        puntaje.AgregarRazon("plazo muy corto");
 
-        puntaje.Advertencias.Should().ContainSingle();
+        puntaje.Razones.Should().ContainSingle();
     }
 
     [Fact]
-    public void AgregarAdvertencia_IgnoraWhitespace()
+    public void AgregarRazon_IgnoraWhitespace()
     {
         var puntaje = CrearPuntaje();
 
-        puntaje.AgregarAdvertencia("   ");
+        puntaje.AgregarRazon("   ");
 
-        puntaje.Advertencias.Should().BeEmpty();
+        puntaje.Razones.Should().BeEmpty();
     }
 }

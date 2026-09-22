@@ -29,7 +29,8 @@ public static class DependencyInjection
         services.AddScoped<IPuntajeRepository, PuntajeRepository>();
         services.AddScoped<IDecisionRepository, DecisionRepository>();
 
-        // ── Scoring (Singleton — pura lógica sin estado) ────────────────────
+        // ── Evaluación dimensional ──────────────────────────────────────────
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IScoringService, ScoringService>();
 
         // ── OpenAI Embeddings ────────────────────────────────────────────────

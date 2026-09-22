@@ -1,0 +1,1 @@
+dotnet build Secop.Buscador.sln passed with 0 errors. Existing NuGet vulnerability warnings remain outside this change.

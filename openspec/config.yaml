@@ -1,0 +1,43 @@
+# SDD configuration initialized for SecopSearch. Preserve user-maintained settings.
+project:
+  name: secopsearch
+  solution: Secop.Buscador.sln
+  context_file: openspec/project-context.md
+workflow:
+  execution_mode: auto
+  artifact_store: both
+  delivery_strategy: ask-on-risk
+  native_status: unresolved
+  next_recommended: sdd-new
+  review_budget_changed_lines: 400
+  active_changes: []
+quality:
+  strict_tdd: true
+  phase_rules:
+    - Define or update change artifacts before implementation work.
+    - Write failing focused tests before production changes when behavior changes.
+    - Preserve Clean Architecture dependency direction: Domain -> Application -> Infrastructure -> API/Worker.
+    - Do not modify tracked user work unrelated to the approved change.
+    - Run focused tests during implementation and dotnet test before delivery.
+testing:
+  runner: dotnet test
+  build_command: dotnet build Secop.Buscador.sln
+  test_command: dotnet test Secop.Buscador.sln
+  framework: xUnit
+  assertions: FluentAssertions
+  mocking: Moq
+  test_projects:
+    - tests/Secop.Domain.Tests/Secop.Domain.Tests.csproj
+    - tests/Secop.Application.Tests/Secop.Application.Tests.csproj
+    - tests/Secop.Infrastructure.Tests/Secop.Infrastructure.Tests.csproj
+repository:
+  language: C#
+  sdk_observed: .NET SDK 10.0.111
+  target_framework_observed: net10.0
+  architecture: Clean Architecture
+  database: PostgreSQL with pgvector
+  integration_points:
+    - SECOP II via Socrata SODA
+    - OpenAI embeddings
+    - Anthropic PDF analysis
+    - Telegram alerts

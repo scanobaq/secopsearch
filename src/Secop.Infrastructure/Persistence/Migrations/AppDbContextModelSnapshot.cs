@@ -19,7 +19,7 @@ namespace Secop.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.1")
+                .HasAnnotation("ProductVersion", "10.0.0")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "vector");
@@ -102,6 +102,28 @@ namespace Secop.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("id");
 
+                    b.Property<string>("AdjudicadoA")
+                        .HasColumnType("text")
+                        .HasColumnName("adjudicado_a");
+
+                    b.PrimitiveCollection<List<string>>("CategoriasAdicionales")
+                        .IsRequired()
+                        .HasColumnType("text[]")
+                        .HasColumnName("categorias_adicionales");
+
+                    b.Property<string>("Clasificacion")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("clasificacion");
+
+                    b.Property<string>("CodigoPrincipalCategoria")
+                        .HasColumnType("text")
+                        .HasColumnName("codigo_principal_categoria");
+
+                    b.Property<int?>("ConteoRespuestasOfertas")
+                        .HasColumnType("integer")
+                        .HasColumnName("conteo_respuestas_ofertas");
+
                     b.Property<string>("DepartamentoEntidad")
                         .IsRequired()
                         .HasColumnType("text")
@@ -115,6 +137,10 @@ namespace Secop.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("estado");
+
+                    b.Property<DateTime?>("FechaAdjudicacion")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("fecha_adjudicacion");
 
                     b.Property<DateTime>("FechaCierre")
                         .HasColumnType("timestamp with time zone")
@@ -148,9 +174,29 @@ namespace Secop.Infrastructure.Persistence.Migrations
                         .HasColumnType("decimal(18,2)")
                         .HasColumnName("presupuesto");
 
+                    b.Property<int?>("ProveedoresInvitados")
+                        .HasColumnType("integer")
+                        .HasColumnName("proveedores_invitados");
+
+                    b.Property<int?>("ProveedoresQueManifestaron")
+                        .HasColumnType("integer")
+                        .HasColumnName("proveedores_que_manifestaron");
+
+                    b.Property<int?>("ProveedoresUnicosCon")
+                        .HasColumnType("integer")
+                        .HasColumnName("proveedores_unicos_con");
+
+                    b.Property<int?>("RespuestasAlProcedimiento")
+                        .HasColumnType("integer")
+                        .HasColumnName("respuestas_al_procedimiento");
+
                     b.Property<DateTime>("SincronizadoEn")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("sincronizado_en");
+
+                    b.Property<string>("TipoContrato")
+                        .HasColumnType("text")
+                        .HasColumnName("tipo_contrato");
 
                     b.Property<string>("Titulo")
                         .IsRequired()
@@ -161,6 +207,10 @@ namespace Secop.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("url_proceso");
+
+                    b.Property<decimal?>("ValorAdjudicacion")
+                        .HasColumnType("decimal(18,2)")
+                        .HasColumnName("valor_adjudicacion");
 
                     b.HasKey("Id");
 
@@ -238,6 +288,11 @@ namespace Secop.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("Accionabilidad")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("accionabilidad");
+
                     b.PrimitiveCollection<List<string>>("Advertencias")
                         .IsRequired()
                         .HasColumnType("text[]")
@@ -246,6 +301,11 @@ namespace Secop.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CalculadoEn")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("calculado_en");
+
+                    b.Property<string>("Elegibilidad")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("elegibilidad");
 
                     b.Property<bool>("EsInhabilitado")
                         .HasColumnType("boolean")
@@ -288,6 +348,19 @@ namespace Secop.Infrastructure.Persistence.Migrations
                     b.Property<float>("PuntajeTotal")
                         .HasColumnType("real")
                         .HasColumnName("puntaje_total");
+
+                    b.PrimitiveCollection<List<string>>("Razones")
+                        .IsRequired()
+                        .HasColumnType("text[]")
+                        .HasColumnName("razones");
+
+                    b.Property<string>("RecomendacionAutomatica")
+                        .HasColumnType("text")
+                        .HasColumnName("recomendacion_automatica");
+
+                    b.Property<float>("RelevanciaPorcentaje")
+                        .HasColumnType("real")
+                        .HasColumnName("relevancia_porcentaje");
 
                     b.HasKey("Id");
 

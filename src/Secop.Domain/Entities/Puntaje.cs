@@ -7,73 +7,80 @@ public class Puntaje
     public Guid Id { get; private set; }
     public string ProcesoId { get; private set; }
     public Guid ProveedorId { get; private set; }
-    public float PuntajeTotal { get; private set; }
-    public float PuntajeSimilitud { get; private set; }    // 35 puntos máx
-    public float PuntajeRequisitos { get; private set; }   // 25 puntos máx
-    public float PuntajeTiempo { get; private set; }       // 20 puntos máx
-    public float PuntajeCompetencia { get; private set; }  // 12 puntos máx
-    public float PuntajeEntidad { get; private set; }      // 8 puntos máx
-    public EtiquetaProceso Etiqueta { get; private set; }
-    public List<string> Advertencias { get; private set; }
-    public bool EsInhabilitado { get; private set; }
+    public float RelevanciaPorcentaje { get; private set; }
+    public EstadoElegibilidad Elegibilidad { get; private set; }
+    public EstadoAccionabilidad Accionabilidad { get; private set; }
+    public RecomendacionAutomatica? RecomendacionAutomatica { get; private set; }
+    public List<string> Razones { get; private set; }
     public DateTime CalculadoEn { get; private set; }
 
-    private Puntaje() { ProcesoId = null!; Advertencias = null!; }
+    public bool EsAlertable =>
+        RecomendacionAutomatica == Secop.Domain.Enums.RecomendacionAutomatica.Analyze &&
+        Elegibilidad != EstadoElegibilidad.Ineligible &&
+        Accionabilidad != EstadoAccionabilidad.InsufficientTime;
+
+    // Campos heredados conservados únicamente para escribir las columnas existentes.
+    private float PuntajeTotal { get; set; }
+    private float PuntajeSimilitud { get; set; }
+    private float PuntajeRequisitos { get; set; }
+    private float PuntajeTiempo { get; set; }
+    private float PuntajeCompetencia { get; set; }
+    private float PuntajeEntidad { get; set; }
+    private EtiquetaProceso Etiqueta { get; set; }
+    private List<string> Advertencias { get; set; }
+    private bool EsInhabilitado { get; set; }
+
+    private Puntaje()
+    {
+        ProcesoId = null!;
+        Razones = null!;
+        Advertencias = null!;
+    }
 
     public Puntaje(
         string procesoId,
         Guid proveedorId,
-        float puntajeTotal,
-        float puntajeSimilitud,
-        float puntajeRequisitos,
-        float puntajeTiempo,
-        float puntajeCompetencia,
-        float puntajeEntidad,
-        EtiquetaProceso etiqueta,
-        List<string> advertencias)
+        float relevanciaPorcentaje,
+        EstadoElegibilidad elegibilidad,
+        EstadoAccionabilidad accionabilidad,
+        RecomendacionAutomatica? recomendacionAutomatica,
+        List<string> razones,
+        DateTime calculadoEn)
     {
+        if (relevanciaPorcentaje is < 0 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(relevanciaPorcentaje));
+
         Id = Guid.NewGuid();
         ProcesoId = procesoId;
         ProveedorId = proveedorId;
-        PuntajeTotal = puntajeTotal;
-        PuntajeSimilitud = puntajeSimilitud;
-        PuntajeRequisitos = puntajeRequisitos;
-        PuntajeTiempo = puntajeTiempo;
-        PuntajeCompetencia = puntajeCompetencia;
-        PuntajeEntidad = puntajeEntidad;
-        Etiqueta = etiqueta;
-        Advertencias = advertencias;
-        EsInhabilitado = false;
-        CalculadoEn = DateTime.UtcNow;
+        RelevanciaPorcentaje = relevanciaPorcentaje;
+        Elegibilidad = elegibilidad;
+        Accionabilidad = accionabilidad;
+        RecomendacionAutomatica = recomendacionAutomatica;
+        Razones = razones;
+        CalculadoEn = calculadoEn;
+
+        PuntajeTotal = 0;
+        PuntajeSimilitud = 0;
+        PuntajeRequisitos = 0;
+        PuntajeTiempo = 0;
+        PuntajeCompetencia = 0;
+        PuntajeEntidad = 0;
+        Etiqueta = recomendacionAutomatica.HasValue
+            ? EtiquetaProceso.Analizar
+            : EtiquetaProceso.Descartar;
+        Advertencias = [.. razones];
+        EsInhabilitado = elegibilidad == EstadoElegibilidad.Ineligible;
     }
 
-    public void AgregarAdvertencia(string advertencia)
+    public void AgregarRazon(string razon)
     {
-        if (string.IsNullOrWhiteSpace(advertencia))
+        if (string.IsNullOrWhiteSpace(razon))
             return;
-        if (!Advertencias.Contains(advertencia, StringComparer.OrdinalIgnoreCase))
-            Advertencias.Add(advertencia);
-    }
+        if (Razones.Contains(razon, StringComparer.OrdinalIgnoreCase))
+            return;
 
-    /// <summary>
-    /// Crea un puntaje inhabilitante (RUP vencido u otro requisito bloqueante).
-    /// El puntaje total es 0 y la etiqueta siempre es Descartar.
-    /// </summary>
-    public static Puntaje Inhabilitado(string procesoId, Guid proveedorId, List<string> advertencias) =>
-        new()
-        {
-            Id = Guid.NewGuid(),
-            ProcesoId = procesoId,
-            ProveedorId = proveedorId,
-            PuntajeTotal = 0,
-            PuntajeSimilitud = 0,
-            PuntajeRequisitos = 0,
-            PuntajeTiempo = 0,
-            PuntajeCompetencia = 0,
-            PuntajeEntidad = 0,
-            Etiqueta = EtiquetaProceso.Descartar,
-            Advertencias = advertencias,
-            EsInhabilitado = true,
-            CalculadoEn = DateTime.UtcNow
-        };
+        Razones.Add(razon);
+        Advertencias.Add(razon);
+    }
 }
